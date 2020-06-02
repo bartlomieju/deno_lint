@@ -1,6 +1,7 @@
 // Copyright 2020 the Deno authors. All rights reserved. MIT license.
 #[macro_use]
 extern crate lazy_static;
+use std::error::Error;
 
 use clap::App;
 use clap::Arg;
@@ -24,7 +25,7 @@ fn create_cli_app<'a, 'b>() -> App<'a, 'b> {
   )
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn Error>> {
   use linter::Linter;
   use rules::get_all_rules;
 
@@ -38,16 +39,14 @@ fn main() {
   let mut error_counts = 0;
 
   for file_name in file_names {
-    let source_code =
-      std::fs::read_to_string(&file_name).expect("Failed to read file");
+    let source_code = std::fs::read_to_string(&file_name)?;
 
     let mut linter = Linter::default();
 
     let rules = get_all_rules();
 
-    let file_diagnostics = linter
-      .lint(file_name.to_string(), source_code, rules)
-      .expect("Failed to lint");
+    let file_diagnostics =
+      linter.lint(file_name.to_string(), source_code, rules)?;
 
     error_counts += file_diagnostics.len();
     for d in file_diagnostics.iter() {
@@ -57,5 +56,8 @@ fn main() {
 
   if error_counts > 0 {
     eprintln!("Found {} problems", error_counts);
+    std::process::exit(1);
   }
+
+  Ok(())
 }
