@@ -1,3 +1,5 @@
+use std::io::IsTerminal;
+
 // Copyright 2020-2021 the Deno authors. All rights reserved. MIT license.
 use crate::color::colorize_markdown;
 use deno_lint::rules::get_all_rules;
@@ -73,7 +75,7 @@ impl RuleFormatter for PrettyFormatter {
           format!("# {code}\n\n{docs}", code = rule.code, docs = rule.docs)
         };
 
-        if atty::is(atty::Stream::Stdout) {
+        if std::io::stdout().is_terminal() {
           Ok(colorize_markdown(&md))
         } else {
           Ok(md)

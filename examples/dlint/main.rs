@@ -93,6 +93,11 @@ fn run_linter(
   } else {
     get_recommended_rules()
   };
+  let plugins = if let Some(config) = maybe_config {
+    // TODO(bartlomieju): resolve plugins correctly
+    // config.plugins
+    vec![]
+  } else {vec![]};
   let file_diagnostics = Arc::new(Mutex::new(BTreeMap::new()));
   paths
     .par_iter()
@@ -107,6 +112,7 @@ fn run_linter(
 
       let linter_builder = LinterBuilder::default()
         .rules(rules.clone())
+        .plugins(plugins)
         .media_type(MediaType::from_path(file_path));
 
       let linter = linter_builder.build();

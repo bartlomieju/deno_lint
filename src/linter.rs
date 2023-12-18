@@ -14,11 +14,19 @@ use deno_ast::Scope;
 
 use std::time::Instant;
 
+pub type LintPluginCallback = dyn Fn(&mut Context);
+
+pub struct LintPlugin {
+  name: String,
+  callback: Box<LintPluginCallback>
+}
+
 pub struct LinterBuilder {
   ignore_file_directive: String,
   ignore_diagnostic_directive: String,
   media_type: MediaType,
   rules: Vec<&'static dyn LintRule>,
+  plugins: Vec<Box<LintPlugin>>,
 }
 
 impl Default for LinterBuilder {
@@ -28,6 +36,7 @@ impl Default for LinterBuilder {
       ignore_diagnostic_directive: "deno-lint-ignore".to_string(),
       media_type: MediaType::TypeScript,
       rules: Vec::new(),
+      plugins: Vec::new(),
     }
   }
 }
@@ -39,6 +48,7 @@ impl LinterBuilder {
       self.ignore_diagnostic_directive,
       self.media_type,
       self.rules,
+      self.plugins,
     )
   }
 
@@ -73,6 +83,12 @@ impl LinterBuilder {
     self.rules = rules;
     self
   }
+
+  /// Set a list of plugins that will be used for linting.
+  pub fn plugins(mut self, plugins: Vec<Box<LintPlugin>>) -> Self {
+    self.plugins = plugins;
+    self
+  }
 }
 
 pub struct Linter {
@@ -80,6 +96,7 @@ pub struct Linter {
   ignore_diagnostic_directive: String,
   media_type: MediaType,
   rules: Vec<&'static dyn LintRule>,
+  plugins: Vec<Box<LintPlugin>>,
 }
 
 impl Linter {
@@ -88,12 +105,14 @@ impl Linter {
     ignore_diagnostic_directive: String,
     media_type: MediaType,
     rules: Vec<&'static dyn LintRule>,
+    plugins: Vec<Box<LintPlugin>>,
   ) -> Self {
     Linter {
       ignore_file_directive,
       ignore_diagnostic_directive,
       media_type,
       rules,
+      plugins,
     }
   }
 
@@ -192,6 +211,9 @@ impl Linter {
       for rule in self.rules.iter() {
         rule.lint_program_with_ast_view(&mut context, pg);
       }
+      // for plugin in self.plugins.iter() {
+      //   (plugin.callback)(&mut context);
+      // }
 
       self.filter_diagnostics(context)
     });

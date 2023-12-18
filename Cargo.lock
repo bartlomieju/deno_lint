@@ -233,7 +233,6 @@ version = "0.52.2"
 dependencies = [
  "ansi_term",
  "anyhow",
- "atty",
  "clap",
  "console_static_text",
  "deno_ast",
