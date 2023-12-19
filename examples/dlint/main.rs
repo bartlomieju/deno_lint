@@ -6,6 +6,7 @@ use clap::Command;
 use deno_ast::MediaType;
 use deno_ast::SourceTextInfo;
 use deno_lint::diagnostic::LintDiagnostic;
+use deno_lint::linter::LintFileOptions;
 use deno_lint::linter::LinterBuilder;
 use deno_lint::rules::{get_filtered_rules, get_recommended_rules};
 use log::debug;
@@ -85,40 +86,42 @@ fn run_linter(
     diagnostics: Vec<LintDiagnostic>,
   }
 
-  let rules = if let Some(config) = maybe_config {
-    config.get_rules()
-  } else if let Some(rule_name) = filter_rule_name {
+  let mut rules = get_recommended_rules();
+  let mut plugins = vec![];
+
+  if let Some(rule_name) = filter_rule_name {
     let include = vec![rule_name.to_string()];
-    get_filtered_rules(Some(vec![]), None, Some(include))
-  } else {
-    get_recommended_rules()
-  };
-  let plugins = if let Some(config) = maybe_config {
+    rules = get_filtered_rules(Some(vec![]), None, Some(include));
+  }
+
+  if let Some(config) = maybe_config {
+    rules = config.get_rules();
     // TODO(bartlomieju): resolve plugins correctly
     // config.plugins
-    vec![]
-  } else {vec![]};
+    plugins = vec![];
+  }
+  
   let file_diagnostics = Arc::new(Mutex::new(BTreeMap::new()));
+  let linter_builder = LinterBuilder::default().rules(rules.clone()).plugins(plugins);
+
+  let linter = linter_builder.build();
+  debug!("Configured rules: {}", rules.len());
+
+  if rules.is_empty() {
+    bail!("There's no rule to be run!");
+  }
+
   paths
     .par_iter()
     .try_for_each(|file_path| -> Result<(), AnyError> {
       let source_code = std::fs::read_to_string(file_path)?;
 
-      debug!("Configured rules: {}", rules.len());
-
-      if rules.is_empty() {
-        bail!("There's no rule to be run!");
-      }
-
-      let linter_builder = LinterBuilder::default()
-        .rules(rules.clone())
-        .plugins(plugins)
-        .media_type(MediaType::from_path(file_path));
-
-      let linter = linter_builder.build();
-
       let (parsed_source, diagnostics) =
-        linter.lint(file_path.to_string_lossy().to_string(), source_code)?;
+        linter.clone().lint_file(LintFileOptions {
+          filename: file_path.to_string_lossy().to_string(),
+          source_code,
+          media_type: MediaType::from_path(file_path),
+        })?;
 
       error_counts.fetch_add(diagnostics.len(), Ordering::Relaxed);
 
