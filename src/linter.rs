@@ -14,11 +14,21 @@ use deno_ast::Scope;
 
 use std::time::Instant;
 
-pub type LintPluginCallback = dyn Fn(&mut Context);
+// TODO(bartlomieju): I'm not yet sure about Send and Sync here.
+// Fine for now to get `dlint` compiling, but it should be optimized
+// to spawn the fewest number of `JsRuntime` instances possible.
+pub type LintPluginCallback = dyn Fn(&mut Context) + Send + Sync;
 
+// #[derive(Clone)]
 pub struct LintPlugin {
   name: String,
   callback: Box<LintPluginCallback>
+}
+
+impl std::fmt::Debug for LintPlugin {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LintPlugin").field("name", &self.name).finish()
+    }
 }
 
 pub struct LinterBuilder {
@@ -26,7 +36,7 @@ pub struct LinterBuilder {
   ignore_diagnostic_directive: String,
   media_type: MediaType,
   rules: Vec<&'static dyn LintRule>,
-  plugins: Vec<Box<LintPlugin>>,
+  plugins: Vec<LintPlugin>,
 }
 
 impl Default for LinterBuilder {
@@ -85,7 +95,7 @@ impl LinterBuilder {
   }
 
   /// Set a list of plugins that will be used for linting.
-  pub fn plugins(mut self, plugins: Vec<Box<LintPlugin>>) -> Self {
+  pub fn plugins(mut self, plugins: Vec<LintPlugin>) -> Self {
     self.plugins = plugins;
     self
   }
@@ -96,7 +106,7 @@ pub struct Linter {
   ignore_diagnostic_directive: String,
   media_type: MediaType,
   rules: Vec<&'static dyn LintRule>,
-  plugins: Vec<Box<LintPlugin>>,
+  plugins: Vec<LintPlugin>,
 }
 
 impl Linter {
@@ -105,7 +115,7 @@ impl Linter {
     ignore_diagnostic_directive: String,
     media_type: MediaType,
     rules: Vec<&'static dyn LintRule>,
-    plugins: Vec<Box<LintPlugin>>,
+    plugins: Vec<LintPlugin>,
   ) -> Self {
     Linter {
       ignore_file_directive,
