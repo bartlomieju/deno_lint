@@ -20,8 +20,8 @@ pub struct PluginLintResponse {
 
 struct LintPluginHostInner {
   join_handle: std::thread::JoinHandle<()>,
-  request_tx: std::sync::mpsc::Sender<PluginLintRequest>,
-  response_rx: std::sync::mpsc::Receiver<PluginLintResponse>,
+  request_tx: tokio::sync::mpsc::UnboundedSender<PluginLintRequest>,
+  response_rx: tokio::sync::mpsc::UnboundedReceiver<PluginLintResponse>,
 }
 
 pub struct LintPluginHost {
@@ -33,8 +33,8 @@ impl LintPluginHost {
     &self,
     filename: String,
     parsed_source: ParsedSource,
-  ) -> Result<PluginLintResponse, RecvError> {
-    let inner = self.inner.lock().unwrap();
+  ) -> Option<PluginLintResponse> {
+    let mut inner = self.inner.lock().unwrap();
     inner
       .request_tx
       .send(PluginLintRequest {
@@ -42,7 +42,7 @@ impl LintPluginHost {
         parsed_source,
       })
       .unwrap();
-    inner.response_rx.recv()
+    inner.response_rx.blocking_recv()
   }
 }
 
@@ -72,6 +72,15 @@ fn op_add_diagnostic(
   #[smi] end: u32,
 ) {
   let ctx = state.borrow_mut::<PluginCtx>();
+
+  let text_str = ctx.parsed_source.text_info().text_str();
+  if text_str.is_empty() {
+    return;
+  }
+  if text_str.len() < end as usize {
+    return;
+  }
+
   let start_source_pos = SourcePos::unsafely_from_byte_pos(BytePos(start));
   let end_source_pos = SourcePos::unsafely_from_byte_pos(BytePos(end));
   let text_info = ctx.parsed_source.text_info();
@@ -98,18 +107,18 @@ fn op_add_diagnostic(
 
 deno_core::extension!(dlint,
   ops = [op_get_ctx, op_add_diagnostic],
-  esm_entry_point = "ext:dlint/plugin_server.js",
+  esm_entry_point = "ext:dlint/plugin_host.js",
   esm = [
     dir "examples/dlint/runtime",
-    "plugin_server.js"
+    "plugin_host.js"
   ],
 );
 
 pub fn create_plugin_host(plugins: Vec<String>) -> LintPluginHost {
   let (request_tx, request_rx) =
-    std::sync::mpsc::channel::<PluginLintRequest>();
+    tokio::sync::mpsc::unbounded_channel::<PluginLintRequest>();
   let (response_tx, response_rx) =
-    std::sync::mpsc::channel::<PluginLintResponse>();
+    tokio::sync::mpsc::unbounded_channel::<PluginLintResponse>();
   let join_handle = std::thread::spawn(move || {
     let rt = tokio::runtime::Builder::new_current_thread()
       .enable_io()
@@ -138,8 +147,8 @@ pub fn create_plugin_host(plugins: Vec<String>) -> LintPluginHost {
 
 async fn run_plugin_host(
   plugins: Vec<String>,
-  request_rx: std::sync::mpsc::Receiver<PluginLintRequest>,
-  response_tx: std::sync::mpsc::Sender<PluginLintResponse>,
+  mut request_rx: tokio::sync::mpsc::UnboundedReceiver<PluginLintRequest>,
+  response_tx: tokio::sync::mpsc::UnboundedSender<PluginLintResponse>,
 ) {
   let start = std::time::Instant::now();
   let mut js_runtime = deno_core::JsRuntime::new(deno_core::RuntimeOptions {
@@ -151,7 +160,7 @@ async fn run_plugin_host(
   let init_config = serde_json::json!({
     "plugins": plugins
   });
-  let init_src = format!("globalThis.serverInit({})", init_config);
+  let init_src = format!("globalThis.hostInit({})", init_config);
   js_runtime
     .execute_script("init.js", init_src.into())
     .unwrap();
@@ -163,13 +172,13 @@ async fn run_plugin_host(
     .await
     .unwrap();
   eprintln!(
-    "[plugin server] runtime created, took {:?}",
+    "[plugin host] runtime created, took {:?}",
     std::time::Instant::now() - start
   );
   let op_state = js_runtime.op_state();
 
-  while let Ok(request) = request_rx.recv() {
-    eprintln!("[plugin server] received request {}", request.filename);
+  while let Some(request) = request_rx.recv().await {
+    eprintln!("[plugin host] received request {}", request.filename);
     let start = std::time::Instant::now();
     {
       let mut state = op_state.borrow_mut();
@@ -179,7 +188,7 @@ async fn run_plugin_host(
         diagnostics: vec![],
       });
     }
-    let src = "globalThis.serverRequest()".to_string();
+    let src = "globalThis.hostRequest()".to_string();
     js_runtime.execute_script("request.js", src.into()).unwrap();
     let ctx = op_state.borrow_mut().take::<PluginCtx>();
     response_tx
@@ -188,7 +197,7 @@ async fn run_plugin_host(
       })
       .unwrap();
     eprintln!(
-      "[plugin server] sent response {:?}",
+      "[plugin host] sent response {:?}",
       std::time::Instant::now() - start
     );
   }

@@ -1,4 +1,4 @@
-Deno.core.print("Hello from plugin_server.js\n");
+Deno.core.print("Hello from plugin_host.js\n");
 
 const getCtx = Deno.core.ops.op_get_ctx;
 const addDiagnostic = Deno.core.ops.op_add_diagnostic;
@@ -6,7 +6,7 @@ const addDiagnostic = Deno.core.ops.op_add_diagnostic;
 const loadedPlugins = [];
 const context = {};
 
-async function serverInit({ plugins }) {
+async function hostInit({ plugins }) {
     
     for (const pluginPath of plugins) {
         const pluginMod = await import(pluginPath);
@@ -17,14 +17,16 @@ async function serverInit({ plugins }) {
     Deno.core.print(`Loaded plugins: ${loadedPlugins.length}\n`)
 }
 
-function serverRequest() {
+function hostRequest() {
     const { filename, ast } = getCtx();
-    Deno.core.print(`Got AST for ${filename}: ${JSON.stringify(ast)}\n`);
+    // Deno.core.print(`Got AST for ${filename}: ${JSON.stringify(ast)}\n`);
     for (const plugin of loadedPlugins) {
         Deno.core.print(`Running plugin: ${plugin.name} for ${filename}\n`)
-        addDiagnostic(plugin.name, "Example Plugin diagnostics", null, 100, 200);
+        if (ast.span) {
+            addDiagnostic(plugin.name, "Example Plugin diagnostics", null, ast.span.start, ast.span.end);
+        }
     }
 }
 
-globalThis.serverInit = serverInit;
-globalThis.serverRequest = serverRequest;
+globalThis.hostInit = hostInit;
+globalThis.hostRequest = hostRequest;
