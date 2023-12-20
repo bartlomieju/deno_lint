@@ -1,9 +1,9 @@
 // Copyright 2020-2021 the Deno authors. All rights reserved. MIT license.
 
+use deno_ast::swc::common::BytePos;
 use deno_ast::{ParsedSource, SourcePos};
-use deno_ast::swc::common::{Span, BytePos};
 use deno_core::{op2, OpState};
-use deno_lint::diagnostic::{LintDiagnostic, Range, Position};
+use deno_lint::diagnostic::{LintDiagnostic, Position, Range};
 use std::rc::Rc;
 use std::sync::mpsc::RecvError;
 use std::sync::{Arc, Mutex};
@@ -12,7 +12,6 @@ pub struct PluginLintRequest {
   pub filename: String,
   pub parsed_source: ParsedSource,
 }
-
 
 #[derive(Debug)]
 pub struct PluginLintResponse {
@@ -63,19 +62,6 @@ fn op_get_ctx(state: &OpState) -> serde_json::Value {
   })
 }
 
-// code: "example_plugin",
-//                 message: "Example Plugin diagnostics",
-//                 location: {
-//                     start: {
-//                         line: 1,
-//                         column: 1,
-//                     },
-//                     end: {
-//                         line: 1,
-//                         column: 1,
-//                     },
-//                 }
-
 #[op2]
 fn op_add_diagnostic(
   state: &mut OpState,
@@ -90,8 +76,14 @@ fn op_add_diagnostic(
   let end_source_pos = SourcePos::unsafely_from_byte_pos(BytePos(end));
   let text_info = ctx.parsed_source.text_info();
   let range = Range {
-    start: Position::new(start as usize, text_info.line_and_column_index(start_source_pos)),
-    end: Position::new(end as usize, text_info.line_and_column_index(end_source_pos)),
+    start: Position::new(
+      start as usize,
+      text_info.line_and_column_index(start_source_pos),
+    ),
+    end: Position::new(
+      end as usize,
+      text_info.line_and_column_index(end_source_pos),
+    ),
   };
 
   let lint_diagnostic = LintDiagnostic {
