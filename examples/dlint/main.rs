@@ -5,6 +5,7 @@ use clap::Arg;
 use clap::Command;
 use deno_ast::MediaType;
 use deno_ast::SourceTextInfo;
+use deno_core::RuntimeOptions;
 use deno_lint::diagnostic::LintDiagnostic;
 use deno_lint::linter::LintFileOptions;
 use deno_lint::linter::LinterBuilder;
@@ -103,13 +104,19 @@ fn run_linter(
     // TODO(bartlomieju): resolve plugins correctly
     // config.plugins
     eprintln!("configured plugins {:#?}", config.plugins);
-    plugins = vec![];
+    plugins = config.plugins.clone();
   }
+
+  let plugin_server = if !plugins.is_empty() {
+    Some(create_plugin_server(plugins))
+  } else {
+    None
+  };
 
   let file_diagnostics = Arc::new(Mutex::new(BTreeMap::new()));
   let linter_builder = LinterBuilder::default()
-    .rules(rules.clone())
-    .plugins(plugins);
+    .rules(rules.clone());
+    // .plugins(plugins);
 
   let linter = linter_builder.build();
   if rules.is_empty() {
@@ -155,6 +162,8 @@ fn run_linter(
   }
 
   let err_count = error_counts.load(Ordering::Relaxed);
+  std::thread::sleep(std::time::Duration::from_secs(1));
+  eprintln!("finished linting");
   if err_count > 0 {
     eprintln!(
       "Found {} problem{}",
@@ -446,4 +455,33 @@ mod tests {
     output: "issue1145_no_trailing_newline.out",
     exit_code: 1,
   });
+}
+
+struct LintPluginServer {
+  join_handle: std::thread::JoinHandle<()>
+}
+
+
+deno_core::extension!(dlint, 
+  // ops = [],
+  esm_entry_point = "ext:dlint/plugin_server.js",
+  esm = [
+    dir "examples/dlint/runtime",
+    "plugin_server.js"
+  ],
+);
+
+fn create_plugin_server(plugins: Vec<String>) -> LintPluginServer {
+  let join_handle = std::thread::spawn(move || {
+    eprintln!("hello from plugin server");
+    let mut js_runtime = deno_core::JsRuntime::new(deno_core::RuntimeOptions {
+      extensions: vec![dlint::init_ops_and_esm()],
+      ..Default::default()
+    });
+    eprintln!("[plugin server] runtime created");
+  });
+  
+  LintPluginServer {
+    join_handle,
+  }
 }

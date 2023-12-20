@@ -26,7 +26,7 @@ pub struct FilesConfig {
 pub struct Config {
   pub rules: Option<RulesConfig>,
   pub files: FilesConfig,
-  pub plugins: Vec<PathBuf>,
+  pub plugins: Vec<String>,
 }
 
 impl Config {
