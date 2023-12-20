@@ -1,6 +1,7 @@
 // Copyright 2020-2021 the Deno authors. All rights reserved. MIT license.
 use anyhow::bail;
 use anyhow::Error as AnyError;
+use deno_core::url::Url;
 use deno_lint::rules::{get_filtered_rules, LintRule};
 use serde::Deserialize;
 use std::path::Path;
@@ -44,6 +45,17 @@ impl Config {
 
   pub fn get_files(&self) -> Result<Vec<PathBuf>, AnyError> {
     resolve_file_paths(&self.files)
+  }
+
+  pub fn get_plugins(&self) -> Result<Vec<String>, AnyError> {
+    let cwd = std::env::current_dir()?;
+    let cwd_url = Url::from_directory_path(cwd).unwrap();
+    let resolved = self
+      .plugins
+      .iter()
+      .map(|p| cwd_url.join(p).unwrap().to_string())
+      .collect::<Vec<_>>();
+    Ok(resolved)
   }
 }
 
