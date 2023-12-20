@@ -1,7 +1,9 @@
 // Copyright 2020-2021 the Deno authors. All rights reserved. MIT license.
 
-use deno_ast::ParsedSource;
+use deno_ast::{ParsedSource, SourcePos};
+use deno_ast::swc::common::{Span, BytePos};
 use deno_core::{op2, OpState};
+use deno_lint::diagnostic::{LintDiagnostic, Range, Position};
 use std::rc::Rc;
 use std::sync::mpsc::RecvError;
 use std::sync::{Arc, Mutex};
@@ -11,9 +13,10 @@ pub struct PluginLintRequest {
   pub parsed_source: ParsedSource,
 }
 
+
 #[derive(Debug)]
 pub struct PluginLintResponse {
-  diagnostics: Vec<(String, String, u32, u32)>,
+  pub diagnostics: Vec<LintDiagnostic>,
 }
 
 struct LintPluginHostInner {
@@ -47,7 +50,7 @@ impl LintPluginHost {
 struct PluginCtx {
   parsed_source: ParsedSource,
   filename: String,
-  diagnostics: Vec<(String, String, u32, u32)>,
+  diagnostics: Vec<LintDiagnostic>,
 }
 
 #[op2]
@@ -73,16 +76,32 @@ fn op_get_ctx(state: &OpState) -> serde_json::Value {
 //                     },
 //                 }
 
-#[op2(fast)]
+#[op2]
 fn op_add_diagnostic(
   state: &mut OpState,
   #[string] code: String,
-  #[string] msg: String,
+  #[string] message: String,
+  #[string] hint: Option<String>,
   #[smi] start: u32,
   #[smi] end: u32,
 ) {
   let ctx = state.borrow_mut::<PluginCtx>();
-  ctx.diagnostics.push((code, msg, start, end));
+  let start_source_pos = SourcePos::unsafely_from_byte_pos(BytePos(start));
+  let end_source_pos = SourcePos::unsafely_from_byte_pos(BytePos(end));
+  let text_info = ctx.parsed_source.text_info();
+  let range = Range {
+    start: Position::new(start as usize, text_info.line_and_column_index(start_source_pos)),
+    end: Position::new(end as usize, text_info.line_and_column_index(end_source_pos)),
+  };
+
+  let lint_diagnostic = LintDiagnostic {
+    range,
+    filename: ctx.filename.to_string(),
+    code,
+    message,
+    hint,
+  };
+  ctx.diagnostics.push(lint_diagnostic);
 }
 
 deno_core::extension!(dlint,

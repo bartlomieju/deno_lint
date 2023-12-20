@@ -134,7 +134,7 @@ fn run_linter(
     .try_for_each(|file_path| -> Result<(), AnyError> {
       let source_code = std::fs::read_to_string(file_path)?;
 
-      let (parsed_source, diagnostics) = linter.lint_file(LintFileOptions {
+      let (parsed_source, mut diagnostics) = linter.lint_file(LintFileOptions {
         filename: file_path.to_string_lossy().to_string(),
         source_code,
         media_type: MediaType::from_path(file_path),
@@ -144,6 +144,14 @@ fn run_linter(
 
       let mut lock = file_diagnostics.lock().unwrap();
 
+      if let Some(plugin_host) = maybe_plugin_host.as_ref() {
+        let response = plugin_host
+          .lint(file_path.to_string_lossy().to_string(), parsed_source.clone())
+          .unwrap();
+        eprintln!("plugin response {:#?}", response);
+        diagnostics.extend_from_slice(&response.diagnostics);
+      }
+
       lock.insert(
         file_path,
         FileDiagnostics {
@@ -152,13 +160,6 @@ fn run_linter(
           text_info: parsed_source.text_info().clone(),
         },
       );
-
-      if let Some(plugin_host) = maybe_plugin_host.as_ref() {
-        let response = plugin_host
-          .lint(file_path.to_string_lossy().to_string(), parsed_source)
-          .unwrap();
-        eprintln!("plugin response {:#?}", response);
-      }
 
       Ok(())
     })?;

@@ -22,7 +22,7 @@ function serverRequest() {
     Deno.core.print(`Got AST for ${filename}: ${JSON.stringify(ast)}\n`);
     for (const plugin of loadedPlugins) {
         Deno.core.print(`Running plugin: ${plugin.name} for ${filename}\n`)
-        addDiagnostic(plugin.name, "Example Plugin diagnostics", 100, 200);
+        addDiagnostic(plugin.name, "Example Plugin diagnostics", null, 100, 200);
     }
 }
 

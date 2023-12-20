@@ -10,30 +10,10 @@ use deno_ast::MediaType;
 use deno_ast::ParsedSource;
 use std::sync::Arc;
 
-// TODO(bartlomieju): I'm not yet sure about Send and Sync here.
-// Fine for now to get `dlint` compiling, but it should be optimized
-// to spawn the fewest number of `JsRuntime` instances possible.
-pub type LintPluginCallback = dyn Fn(&mut Context) + Send + Sync;
-
-// #[derive(Clone)]
-pub struct LintPlugin {
-  name: String,
-  callback: Box<LintPluginCallback>,
-}
-
-impl std::fmt::Debug for LintPlugin {
-  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    f.debug_struct("LintPlugin")
-      .field("name", &self.name)
-      .finish()
-  }
-}
-
 pub struct LinterBuilder {
   ignore_file_directive: String,
   ignore_diagnostic_directive: String,
   rules: Vec<&'static dyn LintRule>,
-  plugins: Vec<LintPlugin>,
 }
 
 impl Default for LinterBuilder {
@@ -42,7 +22,6 @@ impl Default for LinterBuilder {
       ignore_file_directive: "deno-lint-ignore-file".to_string(),
       ignore_diagnostic_directive: "deno-lint-ignore".to_string(),
       rules: Vec::new(),
-      plugins: Vec::new(),
     }
   }
 }
@@ -53,7 +32,6 @@ impl LinterBuilder {
       self.ignore_file_directive,
       self.ignore_diagnostic_directive,
       self.rules,
-      self.plugins,
     )
   }
 
@@ -80,12 +58,6 @@ impl LinterBuilder {
     self.rules = rules;
     self
   }
-
-  /// Set a list of plugins that will be used for linting.
-  pub fn plugins(mut self, plugins: Vec<LintPlugin>) -> Self {
-    self.plugins = plugins;
-    self
-  }
 }
 
 /// A linter instance. It can be cheaply cloned and shared between threads.
@@ -104,7 +76,6 @@ pub struct LinterContext {
   pub check_unknown_rules: bool,
   /// Rules are sorted by priority
   pub rules: Vec<&'static dyn LintRule>,
-  plugins: Vec<LintPlugin>,
 }
 
 impl LinterContext {
@@ -112,7 +83,6 @@ impl LinterContext {
     ignore_file_directive: String,
     ignore_diagnostic_directive: String,
     mut rules: Vec<&'static dyn LintRule>,
-    plugins: Vec<LintPlugin>,
   ) -> Self {
     crate::rules::sort_rules_by_priority(&mut rules);
     let check_unknown_rules = rules
@@ -124,7 +94,6 @@ impl LinterContext {
       ignore_diagnostic_directive,
       check_unknown_rules,
       rules,
-      plugins,
     }
   }
 }
@@ -140,13 +109,11 @@ impl Linter {
     ignore_file_directive: String,
     ignore_diagnostic_directive: String,
     rules: Vec<&'static dyn LintRule>,
-    plugins: Vec<LintPlugin>,
   ) -> Self {
     let ctx = LinterContext::new(
       ignore_file_directive,
       ignore_diagnostic_directive,
       rules,
-      plugins,
     );
 
     Linter { ctx: Arc::new(ctx) }
@@ -243,9 +210,6 @@ impl Linter {
       for rule in self.ctx.rules.iter() {
         rule.lint_program_with_ast_view(&mut context, pg);
       }
-      // for plugin in self.plugins.iter() {
-      //   (plugin.callback)(&mut context);
-      // }
 
       self.collect_diagnostics(context)
     });
