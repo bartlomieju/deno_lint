@@ -24,18 +24,22 @@ pub struct FilesConfig {
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 pub struct Config {
-  pub rules: RulesConfig,
+  pub rules: Option<RulesConfig>,
   pub files: FilesConfig,
   pub plugins: Vec<PathBuf>,
 }
 
 impl Config {
-  pub fn get_rules(&self) -> Vec<&'static dyn LintRule> {
-    get_filtered_rules(
-      Some(self.rules.tags.clone()),
-      Some(self.rules.exclude.clone()),
-      Some(self.rules.include.clone()),
-    )
+  pub fn get_rules(&self) -> Option<Vec<&'static dyn LintRule>> {
+    let Some(rules) = self.rules.as_ref() else {
+      return None;
+    };
+
+    Some(get_filtered_rules(
+      Some(rules.tags.clone()),
+      Some(rules.exclude.clone()),
+      Some(rules.include.clone()),
+    ))
   }
 
   pub fn get_files(&self) -> Result<Vec<PathBuf>, AnyError> {

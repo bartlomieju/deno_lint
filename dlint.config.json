@@ -1,0 +1,6 @@
+{
+    "plugins": [
+        "./examples/dlint/plugins/plugin1.js",
+        "./examples/dlint/plugins/plugin2.js"
+    ]
+}

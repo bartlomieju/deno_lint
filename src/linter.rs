@@ -10,7 +10,6 @@ use deno_ast::MediaType;
 use deno_ast::ParsedSource;
 use std::sync::Arc;
 
-
 // TODO(bartlomieju): I'm not yet sure about Send and Sync here.
 // Fine for now to get `dlint` compiling, but it should be optimized
 // to spawn the fewest number of `JsRuntime` instances possible.
@@ -19,13 +18,15 @@ pub type LintPluginCallback = dyn Fn(&mut Context) + Send + Sync;
 // #[derive(Clone)]
 pub struct LintPlugin {
   name: String,
-  callback: Box<LintPluginCallback>
+  callback: Box<LintPluginCallback>,
 }
 
 impl std::fmt::Debug for LintPlugin {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("LintPlugin").field("name", &self.name).finish()
-    }
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.debug_struct("LintPlugin")
+      .field("name", &self.name)
+      .finish()
+  }
 }
 
 pub struct LinterBuilder {

@@ -89,20 +89,27 @@ fn run_linter(
   let mut rules = get_recommended_rules();
   let mut plugins = vec![];
 
+  eprintln!("filter rule name {:#?}", filter_rule_name);
   if let Some(rule_name) = filter_rule_name {
     let include = vec![rule_name.to_string()];
     rules = get_filtered_rules(Some(vec![]), None, Some(include));
   }
 
   if let Some(config) = maybe_config {
-    rules = config.get_rules();
+    eprintln!("config {:#?}", config);
+    if let Some(r) = config.get_rules() {
+      rules = r;
+    }
     // TODO(bartlomieju): resolve plugins correctly
     // config.plugins
+    eprintln!("configured plugins {:#?}", config.plugins);
     plugins = vec![];
   }
-  
+
   let file_diagnostics = Arc::new(Mutex::new(BTreeMap::new()));
-  let linter_builder = LinterBuilder::default().rules(rules.clone()).plugins(plugins);
+  let linter_builder = LinterBuilder::default()
+    .rules(rules.clone())
+    .plugins(plugins);
 
   let linter = linter_builder.build();
   if rules.is_empty() {

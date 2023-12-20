@@ -2,7 +2,7 @@ export default function plugin({
     context
 }) {
     return {
-        name: "example_plugin",
+        name: "example_plugin2",
         onEnd() {
             context.addDiagnostics({
                 filename: context.filename,
