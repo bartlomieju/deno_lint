@@ -4,10 +4,7 @@ use anyhow::Error as AnyError;
 use clap::Arg;
 use clap::Command;
 use deno_ast::MediaType;
-use deno_ast::ParsedSource;
 use deno_ast::SourceTextInfo;
-use deno_core::futures::future::poll_fn;
-use deno_core::RuntimeOptions;
 use deno_lint::diagnostic::LintDiagnostic;
 use deno_lint::linter::LintFileOptions;
 use deno_lint::linter::LinterBuilder;
@@ -16,15 +13,19 @@ use log::debug;
 use rayon::prelude::*;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::rc::Rc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::mpsc::RecvError;
 use std::sync::{Arc, Mutex};
 
 mod color;
 mod config;
 mod diagnostics;
+mod plugins;
 mod rules;
+
+use plugins::create_plugin_host;
+use plugins::LintPluginHost;
+use plugins::PluginLintRequest;
+use plugins::PluginLintResponse;
 
 fn create_cli_app<'a>() -> Command<'a> {
   Command::new("dlint")
@@ -111,8 +112,8 @@ fn run_linter(
     plugins = config.get_plugins().unwrap();
   }
 
-  let plugin_server = if !plugins.is_empty() {
-    Some(create_plugin_server(plugins))
+  let maybe_plugin_host = if !plugins.is_empty() {
+    Some(create_plugin_host(plugins))
   } else {
     None
   };
@@ -152,8 +153,8 @@ fn run_linter(
         },
       );
 
-      if let Some(plugin_server) = plugin_server.as_ref() {
-        let response = plugin_server
+      if let Some(plugin_host) = maybe_plugin_host.as_ref() {
+        let response = plugin_host
           .lint(file_path.to_string_lossy().to_string(), parsed_source)
           .unwrap();
         eprintln!("plugin response {:#?}", response);
@@ -465,127 +466,4 @@ mod tests {
     output: "issue1145_no_trailing_newline.out",
     exit_code: 1,
   });
-}
-
-struct PluginLintRequest {
-  filename: String,
-  parsed_source: ParsedSource,
-}
-
-#[derive(Debug)]
-struct PluginLintResponse {}
-
-struct LintPluginServerInner {
-  join_handle: std::thread::JoinHandle<()>,
-  request_tx: std::sync::mpsc::Sender<PluginLintRequest>,
-  response_rx: std::sync::mpsc::Receiver<PluginLintResponse>,
-}
-
-struct LintPluginServer {
-  inner: Arc<Mutex<LintPluginServerInner>>,
-}
-
-impl LintPluginServer {
-  pub fn lint(
-    &self,
-    filename: String,
-    parsed_source: ParsedSource,
-  ) -> Result<PluginLintResponse, RecvError> {
-    let inner = self.inner.lock().unwrap();
-    inner
-      .request_tx
-      .send(PluginLintRequest {
-        filename,
-        parsed_source,
-      })
-      .unwrap();
-    inner.response_rx.recv()
-  }
-}
-
-deno_core::extension!(dlint,
-  // ops = [],
-  esm_entry_point = "ext:dlint/plugin_server.js",
-  esm = [
-    dir "examples/dlint/runtime",
-    "plugin_server.js"
-  ],
-);
-
-fn create_plugin_server(plugins: Vec<String>) -> LintPluginServer {
-  let (request_tx, request_rx) =
-    std::sync::mpsc::channel::<PluginLintRequest>();
-  let (response_tx, response_rx) =
-    std::sync::mpsc::channel::<PluginLintResponse>();
-  let join_handle = std::thread::spawn(move || {
-    let rt = tokio::runtime::Builder::new_current_thread()
-      .enable_io()
-      .enable_time()
-      // This limits the number of threads for blocking operations (like for
-      // synchronous fs ops) or CPU bound tasks like when we run dprint in
-      // parallel for deno fmt.
-      // The default value is 512, which is an unhelpfully large thread pool. We
-      // don't ever want to have more than a couple dozen threads.
-      .max_blocking_threads(4)
-      .build()
-      .unwrap();
-
-    rt.block_on(run_plugin_server(plugins, request_rx, response_tx));
-  });
-
-  let inner = LintPluginServerInner {
-    join_handle,
-    request_tx,
-    response_rx,
-  };
-  LintPluginServer {
-    inner: Arc::new(Mutex::new(inner)),
-  }
-}
-
-async fn run_plugin_server(
-  plugins: Vec<String>,
-  request_rx: std::sync::mpsc::Receiver<PluginLintRequest>,
-  response_tx: std::sync::mpsc::Sender<PluginLintResponse>,
-) {
-  let start = std::time::Instant::now();
-  let mut js_runtime = deno_core::JsRuntime::new(deno_core::RuntimeOptions {
-    extensions: vec![dlint::init_ops_and_esm()],
-    module_loader: Some(Rc::new(deno_core::FsModuleLoader)),
-    ..Default::default()
-  });
-
-  let init_config = serde_json::json!({
-    "plugins": plugins
-  });
-  let init_src = format!("globalThis.serverInit({})", init_config);
-  js_runtime
-    .execute_script("init.js", init_src.into())
-    .unwrap();
-  js_runtime
-    .run_event_loop(deno_core::PollEventLoopOptions {
-      wait_for_inspector: false,
-      pump_v8_message_loop: true,
-    })
-    .await
-    .unwrap();
-  eprintln!(
-    "[plugin server] runtime created, took {:?}",
-    std::time::Instant::now() - start
-  );
-
-  while let Ok(request) = request_rx.recv() {
-    eprintln!("[plugin server] received request {}", request.filename);
-    let start = std::time::Instant::now();
-    let request_config = serde_json::json!({
-      "filename": request.filename
-    });
-    let src = format!("globalThis.serverRequest({})", request_config);
-    js_runtime.execute_script("request.js", src.into()).unwrap();
-    response_tx.send(PluginLintResponse {}).unwrap();
-    eprintln!(
-      "[plugin server] sent response {:?}",
-      std::time::Instant::now() - start
-    );
-  }
 }
