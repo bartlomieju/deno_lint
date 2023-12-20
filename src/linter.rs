@@ -1,19 +1,14 @@
-use std::sync::Arc;
-
 // Copyright 2020-2021 the Deno authors. All rights reserved. MIT license.
 use crate::ast_parser::parse_program;
 use crate::context::Context;
-use crate::control_flow::ControlFlow;
 use crate::diagnostic::LintDiagnostic;
-use crate::ignore_directives::{
-  parse_file_ignore_directives, parse_line_ignore_directives,
-};
+use crate::ignore_directives::parse_file_ignore_directives;
 use crate::performance_mark::PerformanceMark;
 use crate::rules::{ban_unknown_rule_code::BanUnknownRuleCode, LintRule};
 use deno_ast::Diagnostic;
 use deno_ast::MediaType;
 use deno_ast::ParsedSource;
-use deno_ast::Scope;
+use std::sync::Arc;
 
 
 // TODO(bartlomieju): I'm not yet sure about Send and Sync here.
@@ -98,13 +93,16 @@ pub struct Linter {
   ctx: Arc<LinterContext>,
 }
 
-/// TODO(bartlomieju): docstring
+/// A struct defining configuration of a `Linter` instance.
+///
+/// This struct is passed along and used to construct a specific file context,
+/// just before a particular file is linted.
 pub struct LinterContext {
-  ignore_file_directive: String,
-  ignore_diagnostic_directive: String,
-  check_unknown_rules: bool,
+  pub ignore_file_directive: String,
+  pub ignore_diagnostic_directive: String,
+  pub check_unknown_rules: bool,
   /// Rules are sorted by priority
-  rules: Vec<&'static dyn LintRule>,
+  pub rules: Vec<&'static dyn LintRule>,
   plugins: Vec<LintPlugin>,
 }
 
@@ -153,8 +151,14 @@ impl Linter {
     Linter { ctx: Arc::new(ctx) }
   }
 
+  /// Lint a single file.
+  ///
+  /// Returns `ParsedSource` and `Vec<ListDiagnostic>`, so the file can be
+  /// processed further without having to be parsed again.
+  ///
+  /// If you have an already parsed file, use `Linter::lint_with_ast` instead.
   pub fn lint_file(
-    mut self,
+    &self,
     options: LintFileOptions,
   ) -> Result<(ParsedSource, Vec<LintDiagnostic>), Diagnostic> {
     let _mark = PerformanceMark::new("Linter::lint");
@@ -165,19 +169,26 @@ impl Linter {
     };
 
     let parsed_source = parse_result?;
-    let diagnostics = self.lint_program(&parsed_source);
+    let diagnostics = self.lint_inner(&parsed_source);
 
     Ok((parsed_source, diagnostics))
   }
 
+  /// Lint an already parsed file.
+  ///
+  /// This method is useful in context where the file is already parsed for other
+  /// purposes like transpilation or LSP analysis.
   pub fn lint_with_ast(
-    mut self,
+    &self,
     parsed_source: &ParsedSource,
   ) -> Vec<LintDiagnostic> {
     let _mark = PerformanceMark::new("Linter::lint_with_ast");
-    self.lint_program(parsed_source)
+    self.lint_inner(parsed_source)
   }
 
+  // TODO(bartlomieju): this struct does too much - not only it checks for ignored
+  // lint rules, it also runs 2 additional rules. These rules should be rewritten
+  // to use a regular way of writing a rule and not live on the `Context` struct.
   fn collect_diagnostics(&self, mut context: Context) -> Vec<LintDiagnostic> {
     let _mark = PerformanceMark::new("Linter::collect_diagnostics");
 
@@ -193,40 +204,41 @@ impl Linter {
     diagnostics
   }
 
-  fn lint_program(
-    &mut self,
-    parsed_source: &ParsedSource,
-  ) -> Vec<LintDiagnostic> {
-    let _mark = PerformanceMark::new("Linter::lint_program");
+  fn lint_inner(&self, parsed_source: &ParsedSource) -> Vec<LintDiagnostic> {
+    let _mark = PerformanceMark::new("Linter::lint_inner");
 
-    let control_flow = ControlFlow::analyze(parsed_source);
     let diagnostics = parsed_source.with_view(|pg| {
+      // If a top-level ignore directive exists, eg:
+      // ```
+      //   // deno-lint-ignore-file
+      // ```
+      // and there's no particular rule(s) specified, eg:
+      // ```
+      //   // deno-lint-ignore-file no-undefined
+      // ```
+      // we want to ignore the whole file.
+      //
+      // That means we want to return no diagnostics for a particular file, so
+      // we're gonna check if the file should be ignored, before performing
+      // other expensive work like scope or control-flow analysis.
       let file_ignore_directive =
         parse_file_ignore_directives(&self.ctx.ignore_file_directive, pg);
-
-      // If a global ignore directive that has no codes specified exists, we must skip linting on
-      // this file.
-      if matches!(file_ignore_directive, Some(ref file_ignore) if file_ignore.ignore_all())
-      {
-        return vec![];
+      if let Some(ignore_directive) = file_ignore_directive.as_ref() {
+        if ignore_directive.ignore_all() {
+          return vec![];
+        }
       }
 
-      let line_ignore_directives =
-        parse_line_ignore_directives(&self.ctx.ignore_diagnostic_directive, pg);
-
-      let scope = Scope::analyze(pg);
-
+      // TODO(bartlomieju): rename to `FileContext`? It would be a very noisy
+      // change, but "Context" is so ambiguous.
       let mut context = Context::new(
+        &self.ctx,
         parsed_source.clone(),
         pg,
         file_ignore_directive,
-        line_ignore_directives,
-        scope,
-        control_flow,
-        self.ctx.check_unknown_rules,
       );
 
-      // Run builtin rules
+      // Run configured lint rules.
       for rule in self.ctx.rules.iter() {
         rule.lint_program_with_ast_view(&mut context, pg);
       }
