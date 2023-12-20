@@ -114,9 +114,8 @@ fn run_linter(
   };
 
   let file_diagnostics = Arc::new(Mutex::new(BTreeMap::new()));
-  let linter_builder = LinterBuilder::default()
-    .rules(rules.clone());
-    // .plugins(plugins);
+  let linter_builder = LinterBuilder::default().rules(rules.clone());
+  // .plugins(plugins);
 
   let linter = linter_builder.build();
   if rules.is_empty() {
@@ -458,11 +457,10 @@ mod tests {
 }
 
 struct LintPluginServer {
-  join_handle: std::thread::JoinHandle<()>
+  join_handle: std::thread::JoinHandle<()>,
 }
 
-
-deno_core::extension!(dlint, 
+deno_core::extension!(dlint,
   // ops = [],
   esm_entry_point = "ext:dlint/plugin_server.js",
   esm = [
@@ -480,8 +478,6 @@ fn create_plugin_server(plugins: Vec<String>) -> LintPluginServer {
     });
     eprintln!("[plugin server] runtime created");
   });
-  
-  LintPluginServer {
-    join_handle,
-  }
+
+  LintPluginServer { join_handle }
 }
