@@ -20,7 +20,7 @@ async function hostInit({ plugins }) {
 
 function hostRequest() {
     const { filename, ast } = getCtx();
-    Deno.core.print(`Got AST for ${filename}: ${JSON.stringify(ast)}\n`);
+    Deno.core.print(`Got AST for ${filename}: ${JSON.stringify(ast, undefined, 4)}\n`);
     for (const plugin of loadedPlugins) {
         Deno.core.print(`Running plugin: ${plugin.name} for ${filename}\n`)
         // const visitor = new Visitor();
