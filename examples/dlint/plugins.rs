@@ -1,12 +1,16 @@
 // Copyright 2020-2021 the Deno authors. All rights reserved. MIT license.
 
+use deno_ast::swc::common as swc_common;
 use deno_ast::swc::common::BytePos;
 use deno_ast::{ParsedSource, SourcePos};
 use deno_core::{op2, OpState};
 use deno_lint::diagnostic::{LintDiagnostic, Position, Range};
 use std::rc::Rc;
 use std::sync::mpsc::RecvError;
+use deno_ast::view::Comments;
 use std::sync::{Arc, Mutex};
+use swc_estree_compat::babelify;
+use swc_estree_compat::babelify::Babelify;
 
 pub struct PluginLintRequest {
   pub filename: String,
@@ -56,9 +60,32 @@ struct PluginCtx {
 #[serde]
 fn op_get_ctx(state: &OpState) -> serde_json::Value {
   let ctx = state.borrow::<PluginCtx>();
+
+  // Create an ESTree compatbile AST
+  let estree_ast = {
+    let cm = Arc::new(swc_common::SourceMap::new(
+      swc_common::FilePathMapping::empty(),
+    ));
+    let fm = Arc::new(swc_common::SourceFile::new(
+      swc_common::FileName::Anon,
+      false,
+      swc_common::FileName::Anon,
+      ctx.parsed_source.text_info().text_str().to_string(),
+      BytePos(0),
+    ));
+    // let comments = deno_ast::MultiThreadedComments;
+    let babelify_ctx = babelify::Context {
+      fm,
+      cm,
+      comments: swc_node_comments::SwcComments::default(),
+    };
+    let program = ctx.parsed_source.program_ref().clone();
+    serde_json::to_value(program.babelify(&babelify_ctx)).unwrap()
+  };
+
   serde_json::json!({
       "filename": &ctx.filename,
-      "ast": ctx.parsed_source.program_ref()
+      "ast": estree_ast
   })
 }
 
@@ -110,7 +137,8 @@ deno_core::extension!(dlint,
   esm_entry_point = "ext:dlint/plugin_host.js",
   esm = [
     dir "examples/dlint/runtime",
-    "plugin_host.js"
+    "plugin_host.js",
+    "visitor.js"
   ],
 );
 

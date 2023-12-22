@@ -1,3 +1,4 @@
+// import { Visitor } from "ext:dlint/visitor.js"
 Deno.core.print("Hello from plugin_host.js\n");
 
 const getCtx = Deno.core.ops.op_get_ctx;
@@ -19,11 +20,13 @@ async function hostInit({ plugins }) {
 
 function hostRequest() {
     const { filename, ast } = getCtx();
-    // Deno.core.print(`Got AST for ${filename}: ${JSON.stringify(ast)}\n`);
+    Deno.core.print(`Got AST for ${filename}: ${JSON.stringify(ast)}\n`);
     for (const plugin of loadedPlugins) {
         Deno.core.print(`Running plugin: ${plugin.name} for ${filename}\n`)
+        // const visitor = new Visitor();
+        // visitor.visitProgram(ast);
         if (ast.span) {
-            addDiagnostic(plugin.name, "Example Plugin diagnostics", null, ast.span.start, ast.span.end);
+            addDiagnostic(plugin.name, "Example Plugin diagnostics", null, 100, 200);
         }
     }
 }
