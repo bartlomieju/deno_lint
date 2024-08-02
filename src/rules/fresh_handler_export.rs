@@ -1,6 +1,5 @@
-use std::path::Path;
+// Copyright 2018-2024 the Deno authors. All rights reserved. MIT license.
 
-// Copyright 2020-2023 the Deno authors. All rights reserved. MIT license.
 use super::{Context, LintRule};
 use crate::handler::{Handler, Traverse};
 
@@ -48,12 +47,10 @@ impl Handler for Visitor {
   ) {
     // Fresh only considers components in the routes/ folder to be
     // server components.
-    let path = Path::new(ctx.file_name());
-    if !path
-      .components()
-      .map(|comp| comp.as_os_str())
-      .any(|comp| comp == "routes")
-    {
+    let Some(mut path_segments) = ctx.specifier().path_segments() else {
+      return;
+    };
+    if !path_segments.any(|part| part == "routes") {
       return;
     }
 
@@ -82,53 +79,64 @@ impl Handler for Visitor {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::test_util::assert_lint_ok;
 
   #[test]
   fn fresh_handler_export_name() {
-    assert_lint_ok(&FreshHandlerExport, "const handler = {}", "foo.jsx");
-    assert_lint_ok(&FreshHandlerExport, "function handler() {}", "foo.jsx");
-    assert_lint_ok(&FreshHandlerExport, "export const handler = {}", "foo.jsx");
-    assert_lint_ok(
-      &FreshHandlerExport,
-      "export const handlers = {}",
-      "foo.jsx",
+    assert_lint_ok!(
+      FreshHandlerExport,
+      filename: "file:///foo.jsx",
+      "const handler = {}",
     );
-    assert_lint_ok(
-      &FreshHandlerExport,
-      "export function handlers() {}",
-      "foo.jsx",
+    assert_lint_ok!(
+      FreshHandlerExport,
+      filename: "file:///foo.jsx",
+      "function handler() {}",
     );
-
-    assert_lint_ok(
-      &FreshHandlerExport,
+    assert_lint_ok!(
+      FreshHandlerExport,
+      filename: "file:///foo.jsx",
       "export const handler = {}",
-      "routes/foo.jsx",
     );
-    assert_lint_ok(
-      &FreshHandlerExport,
-      "export function handler() {}",
-      "routes/foo.jsx",
+    assert_lint_ok!(
+      FreshHandlerExport,
+      filename: "file:///foo.jsx",
+      "export const handlers = {}",
     );
-    assert_lint_ok(
-      &FreshHandlerExport,
-      "export async function handler() {}",
-      "routes/foo.jsx",
+    assert_lint_ok!(
+      FreshHandlerExport,
+      filename: "file:///foo.jsx",
+      "export function handlers() {}",
     );
 
-    assert_lint_err!(FreshHandlerExport, filename: "routes/index.tsx",  r#"export const handlers = {}"#: [
+    assert_lint_ok!(
+      FreshHandlerExport,
+      filename: "file:///routes/foo.jsx",
+      "export const handler = {}",
+    );
+    assert_lint_ok!(
+      FreshHandlerExport,
+      filename: "file:///routes/foo.jsx",
+      "export function handler() {}",
+    );
+    assert_lint_ok!(
+      FreshHandlerExport,
+      filename: "file:///routes/foo.jsx",
+      "export async function handler() {}",
+    );
+
+    assert_lint_err!(FreshHandlerExport, filename: "file:///routes/index.tsx",  r#"export const handlers = {}"#: [
     {
       col: 13,
       message: MESSAGE,
       hint: HINT,
     }]);
-    assert_lint_err!(FreshHandlerExport, filename: "routes/index.tsx",  r#"export function handlers() {}"#: [
+    assert_lint_err!(FreshHandlerExport, filename: "file:///routes/index.tsx",  r#"export function handlers() {}"#: [
     {
       col: 16,
       message: MESSAGE,
       hint: HINT,
     }]);
-    assert_lint_err!(FreshHandlerExport, filename: "routes/index.tsx",  r#"export async function handlers() {}"#: [
+    assert_lint_err!(FreshHandlerExport, filename: "file:///routes/index.tsx",  r#"export async function handlers() {}"#: [
     {
       col: 22,
       message: MESSAGE,

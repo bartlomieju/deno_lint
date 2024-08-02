@@ -1,4 +1,5 @@
-// Copyright 2020-2021 the Deno authors. All rights reserved. MIT license.
+// Copyright 2018-2024 the Deno authors. All rights reserved. MIT license.
+
 use super::program_ref;
 use super::{Context, LintRule};
 use crate::Program;
@@ -100,7 +101,26 @@ impl<'c, 'view> NoImportAssignVisitor<'c, 'view> {
     }
   }
 
-  fn is_modifier(&self, obj: &Expr, prop: &Ident) -> bool {
+  fn check_simple_assign(
+    &mut self,
+    range: SourceRange,
+    e: &SimpleAssignTarget,
+  ) {
+    match e {
+      SimpleAssignTarget::Ident(i) => {
+        self.check(range, i, false);
+      }
+      SimpleAssignTarget::Member(e) => self.check_assign(range, &e.obj, true),
+      SimpleAssignTarget::Paren(e) => self.check_expr(range, &e.expr),
+      SimpleAssignTarget::OptChain(e) => match &*e.base {
+        OptChainBase::Call(e) => self.visit_opt_call(e),
+        OptChainBase::Member(e) => self.check_expr(range, &e.obj),
+      },
+      _ => e.visit_children_with(self),
+    }
+  }
+
+  fn is_modifier(&self, obj: &Expr, prop: &IdentName) -> bool {
     let obj = if let Expr::Ident(obj) = obj {
       obj
     } else {
@@ -199,13 +219,13 @@ impl<'c, 'view> Visit for NoImportAssignVisitor<'c, 'view> {
 
   fn visit_assign_expr(&mut self, n: &AssignExpr) {
     match &n.left {
-      PatOrExpr::Expr(e) => {
-        self.check_expr(n.range(), e);
+      AssignTarget::Simple(simple) => {
+        self.check_simple_assign(n.range(), simple);
       }
-      PatOrExpr::Pat(p) => {
+      AssignTarget::Pat(p) => {
         p.visit_with(self);
       }
-    };
+    }
     n.right.visit_with(self);
   }
 

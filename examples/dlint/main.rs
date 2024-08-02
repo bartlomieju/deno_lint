@@ -1,17 +1,23 @@
-// Copyright 2020-2021 the Deno authors. All rights reserved. MIT license.
+// Copyright 2018-2024 the Deno authors. All rights reserved. MIT license.
+
 use anyhow::bail;
 use anyhow::Error as AnyError;
 use clap::Arg;
 use clap::Command;
+use core::panic;
+use deno_ast::diagnostics::Diagnostic;
 use deno_ast::MediaType;
-use deno_ast::SourceTextInfo;
-use deno_lint::diagnostic::LintDiagnostic;
+use deno_ast::ModuleSpecifier;
+use deno_lint::linter::LintConfig;
 use deno_lint::linter::LintFileOptions;
-use deno_lint::linter::LinterBuilder;
-use deno_lint::rules::{get_filtered_rules, get_recommended_rules};
+use deno_lint::linter::Linter;
+use deno_lint::linter::LinterOptions;
+use deno_lint::rules::get_all_rules;
+use deno_lint::rules::{filtered_rules, recommended_rules};
 use log::debug;
 use rayon::prelude::*;
 use std::collections::BTreeMap;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -78,7 +84,9 @@ fn run_linter(
   maybe_config: Option<Arc<config::Config>>,
   format: Option<&str>,
 ) -> Result<(), AnyError> {
-  let mut paths: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
+  let cwd = std::env::current_dir()?;
+  let mut paths: Vec<PathBuf> =
+    paths.iter().map(|path| cwd.join(path)).collect();
 
   if let Some(config) = maybe_config.clone() {
     paths.extend(config.get_files()?);
@@ -119,29 +127,67 @@ fn run_linter(
   };
 
   let file_diagnostics = Arc::new(Mutex::new(BTreeMap::new()));
-  let linter_builder = LinterBuilder::default().rules(rules.clone());
-  // .plugins(plugins);
 
-  let linter = linter_builder.build();
+  let all_rules = get_all_rules();
+  let all_rule_codes = all_rules
+    .iter()
+    .map(|rule| rule.code())
+    .collect::<HashSet<_>>();
+  let rules = if let Some(config) = maybe_config {
+    config.get_rules()
+  } else if let Some(rule_name) = filter_rule_name {
+    let include = vec![rule_name.to_string()];
+    filtered_rules(get_all_rules(), Some(vec![]), None, Some(include))
+  } else {
+    recommended_rules(get_all_rules())
+  };
+
   if rules.is_empty() {
     bail!("No lint rules configured");
   } else {
     debug!("Configured rules: {}", rules.len());
   }
+  let file_diagnostics = Arc::new(Mutex::new(BTreeMap::new()));
+  let linter = Linter::new(LinterOptions {
+    rules,
+    all_rule_codes,
+    custom_ignore_file_directive: None,
+    custom_ignore_diagnostic_directive: None,
+  });
 
   paths
     .par_iter()
     .try_for_each(|file_path| -> Result<(), AnyError> {
       let source_code = std::fs::read_to_string(file_path)?;
 
-      let (parsed_source, mut diagnostics) =
-        linter.lint_file(LintFileOptions {
-          filename: file_path.to_string_lossy().to_string(),
-          source_code,
-          media_type: MediaType::from_path(file_path),
-        })?;
+      let (parsed_source, diagnostics) = linter.lint_file(LintFileOptions {
+        specifier: ModuleSpecifier::from_file_path(file_path).unwrap_or_else(
+          |_| {
+            panic!(
+              "Failed to convert path to module specifier: {}",
+              file_path.display()
+            )
+          },
+        ),
+        source_code,
+        media_type: MediaType::from_path(file_path),
+        config: LintConfig {
+          default_jsx_factory: Some("React.createElement".to_string()),
+          default_jsx_fragment_factory: Some("React.Fragment".to_string()),
+        },
+      })?;
 
-      error_counts.fetch_add(diagnostics.len(), Ordering::Relaxed);
+      let mut number_of_errors = diagnostics.len();
+      if !parsed_source.diagnostics().is_empty() {
+        number_of_errors += parsed_source.diagnostics().to_vec().len();
+        parsed_source.diagnostics().to_vec().iter().for_each(
+          |parsing_diagnostic| {
+            eprintln!("{}", parsing_diagnostic.display());
+          },
+        );
+      }
+
+      error_counts.fetch_add(number_of_errors, Ordering::Relaxed);
 
       let mut lock = file_diagnostics.lock().unwrap();
 
@@ -164,17 +210,13 @@ fn run_linter(
           text_info: parsed_source.text_info().clone(),
         },
       );
+      lock.insert(file_path, diagnostics);
 
       Ok(())
     })?;
 
   for d in file_diagnostics.lock().unwrap().values() {
-    diagnostics::display_diagnostics(
-      &d.diagnostics,
-      &d.text_info,
-      &d.filename,
-      format,
-    );
+    diagnostics::display_diagnostics(d, format);
   }
 
   let err_count = error_counts.load(Ordering::Relaxed);

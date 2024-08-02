@@ -1,11 +1,15 @@
-// Copyright 2020-2021 the Deno authors. All rights reserved. MIT license.
+// Copyright 2018-2024 the Deno authors. All rights reserved. MIT license.
+
 use deno_ast::swc::ast::{
-  BigInt, Bool, ComputedPropName, Expr, Ident, JSXText, Lit, MemberExpr,
-  MemberProp, Null, Number, PatOrExpr, PrivateName, Prop, PropName,
+  ArrowExpr, BigInt, BindingIdent, BlockStmt, Bool, CallExpr, Class,
+  ComputedPropName, Constructor, Expr, Function, Ident, IdentName, JSXText,
+  Lit, MemberExpr, MemberProp, Null, Number, PrivateName, Prop, PropName,
   PropOrSpread, Regex, Str, Tpl,
 };
+use deno_ast::swc::common::DUMMY_SP;
 use deno_ast::swc::utils::{find_pat_ids, ident::IdentLike};
-use deno_ast::view as ast_view;
+use deno_ast::swc::visit::{VisitMut, VisitMutWith};
+use deno_ast::view::{self as ast_view};
 use deno_ast::Scope;
 
 /// Extracts regex string from an expression, using ScopeManager.
@@ -23,7 +27,7 @@ pub(crate) fn extract_regex(
     return None;
   }
 
-  match expr_args.get(0) {
+  match expr_args.first() {
     Some(first_arg) => match first_arg.expr {
       ast_view::Expr::Lit(ast_view::Lit::Str(literal)) => {
         Some(literal.inner.value.to_string())
@@ -90,6 +94,12 @@ impl StringRepr for Ident {
   }
 }
 
+impl StringRepr for IdentName {
+  fn string_repr(&self) -> Option<String> {
+    Some(self.sym.to_string())
+  }
+}
+
 impl StringRepr for PropOrSpread {
   fn string_repr(&self) -> Option<String> {
     use PropOrSpread::*;
@@ -131,7 +141,7 @@ impl StringRepr for Lit {
 impl StringRepr for Tpl {
   fn string_repr(&self) -> Option<String> {
     if self.exprs.is_empty() {
-      self.quasis.get(0).map(|q| q.raw.to_string())
+      self.quasis.first().map(|q| q.raw.to_string())
     } else {
       None
     }
@@ -167,7 +177,7 @@ impl StringRepr for PropName {
 
 impl StringRepr for PrivateName {
   fn string_repr(&self) -> Option<String> {
-    self.id.string_repr()
+    Some(self.name.to_string())
   }
 }
 
@@ -207,6 +217,7 @@ macro_rules! impl_string_repr_for_ast_view {
 
 impl_string_repr_for_ast_view!(
   Ident,
+  IdentName,
   Tpl,
   PrivateName,
   MemberExpr,
@@ -288,15 +299,75 @@ impl<'view> StringRepr for ast_view::PropName<'view> {
 }
 
 /// Find `Id`s in the lhs of an assigmnet expression.
-pub(crate) fn find_lhs_ids<I>(n: &PatOrExpr) -> Vec<I>
+pub(crate) fn find_lhs_ids<I>(n: &ast_view::AssignTarget) -> Vec<I>
 where
   I: IdentLike,
 {
   match &n {
-    PatOrExpr::Expr(e) => match &**e {
-      Expr::Ident(i) => vec![I::from_ident(i)],
+    ast_view::AssignTarget::Simple(e) => match e {
+      ast_view::SimpleAssignTarget::Ident(i) => vec![I::from_ident(i.id.inner)],
       _ => vec![],
     },
-    PatOrExpr::Pat(p) => find_pat_ids(p),
+    ast_view::AssignTarget::Pat(p) => match p {
+      ast_view::AssignTargetPat::Array(node) => find_pat_ids(node.inner),
+      ast_view::AssignTargetPat::Object(node) => find_pat_ids(node.inner),
+      ast_view::AssignTargetPat::Invalid(_) => Vec::new(),
+    },
+  }
+}
+
+pub fn span_and_ctx_drop<T>(mut t: T) -> T
+where
+  T: VisitMutWith<DropSpanAndCtx>,
+{
+  t.visit_mut_with(&mut DropSpanAndCtx {});
+  t
+}
+
+pub struct DropSpanAndCtx;
+impl VisitMut for DropSpanAndCtx {
+  #[allow(clippy::disallowed_types)]
+  fn visit_mut_span(&mut self, span: &mut deno_ast::swc::common::Span) {
+    *span = DUMMY_SP;
+  }
+
+  fn visit_mut_ident(&mut self, node: &mut Ident) {
+    node.ctxt = Default::default();
+    node.visit_mut_children_with(self);
+  }
+
+  fn visit_mut_binding_ident(&mut self, node: &mut BindingIdent) {
+    node.ctxt = Default::default();
+    node.visit_mut_children_with(self);
+  }
+
+  fn visit_mut_arrow_expr(&mut self, node: &mut ArrowExpr) {
+    node.ctxt = Default::default();
+    node.visit_mut_children_with(self);
+  }
+
+  fn visit_mut_block_stmt(&mut self, node: &mut BlockStmt) {
+    node.ctxt = Default::default();
+    node.visit_mut_children_with(self);
+  }
+
+  fn visit_mut_call_expr(&mut self, node: &mut CallExpr) {
+    node.ctxt = Default::default();
+    node.visit_mut_children_with(self);
+  }
+
+  fn visit_mut_class(&mut self, node: &mut Class) {
+    node.ctxt = Default::default();
+    node.visit_mut_children_with(self);
+  }
+
+  fn visit_mut_constructor(&mut self, node: &mut Constructor) {
+    node.ctxt = Default::default();
+    node.visit_mut_children_with(self);
+  }
+
+  fn visit_mut_function(&mut self, node: &mut Function) {
+    node.ctxt = Default::default();
+    node.visit_mut_children_with(self);
   }
 }

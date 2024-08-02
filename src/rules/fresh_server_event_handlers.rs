@@ -1,6 +1,5 @@
-use std::path::Path;
+// Copyright 2018-2024 the Deno authors. All rights reserved. MIT license.
 
-// Copyright 2020-2023 the Deno authors. All rights reserved. MIT license.
 use super::{Context, LintRule};
 use crate::handler::{Handler, Traverse};
 
@@ -52,10 +51,12 @@ impl Handler for Visitor {
     // Fresh only considers components in the routes/ folder to be
     // server components. Files inside an `(_islands)` folder are considered
     // islands though, even if they are inside the `routes` folder.
-    let path = Path::new(ctx.file_name());
-    let mut path_component = path.components().map(|comp| comp.as_os_str());
-    if !path_component.any(|comp| comp == "routes")
-      || path_component.any(|comp| comp == "(_islands)")
+    let Some(path_segments) = ctx.specifier().path_segments() else {
+      return;
+    };
+    let segments = path_segments.collect::<Vec<_>>();
+    if !segments.iter().any(|comp| *comp == "routes")
+      || segments.iter().any(|comp| *comp == "(_islands)")
     {
       return;
     }
@@ -129,77 +130,76 @@ impl Handler for Visitor {
 #[cfg(test)]
 mod tests {
   use super::*;
-  use crate::test_util::assert_lint_ok;
 
   #[test]
   fn no_server_event_handler() {
-    assert_lint_ok(
-      &FreshServerEventHandlers,
+    assert_lint_ok!(
+      FreshServerEventHandlers,
+      filename: "file:///foo.jsx",
       "<Foo onClick={() => {}} />",
-      "foo.jsx",
     );
-    assert_lint_ok(
-      &FreshServerEventHandlers,
+    assert_lint_ok!(
+      FreshServerEventHandlers,
+      filename: "file:///foo.jsx",
       "<button onClick={() => {}} />",
-      "foo.jsx",
     );
-    assert_lint_ok(
-      &FreshServerEventHandlers,
+    assert_lint_ok!(
+      FreshServerEventHandlers,
+      filename: "file:///foo.jsx",
       "<button onClick={function () {}} />",
-      "foo.jsx",
     );
-    assert_lint_ok(
-      &FreshServerEventHandlers,
+    assert_lint_ok!(
+      FreshServerEventHandlers,
+      filename: "file:///foo.jsx",
       "<button onclick={function () {}} />",
-      "foo.jsx",
     );
-    assert_lint_ok(
-      &FreshServerEventHandlers,
+    assert_lint_ok!(
+      FreshServerEventHandlers,
+      filename: "file:///foo.jsx",
       "<button onClick=\"console.log('hey')\" />",
-      "foo.jsx",
     );
-    assert_lint_ok(
-      &FreshServerEventHandlers,
+    assert_lint_ok!(
+      FreshServerEventHandlers,
+      filename: "file:///foo.jsx",
       "<button online=\"foo\" />",
-      "foo.jsx",
     );
-    assert_lint_ok(
-      &FreshServerEventHandlers,
+    assert_lint_ok!(
+      FreshServerEventHandlers,
+      filename: "file:///foo.jsx",
       "<x-foo onClick=\"console.log('hey')\" />",
-      "foo.jsx",
     );
-    assert_lint_ok(
-      &FreshServerEventHandlers,
+    assert_lint_ok!(
+      FreshServerEventHandlers,
+      filename: "file:///routes/foo/(_islands)/foo.jsx",
       "<button onClick={function () {}} />",
-      "routes/foo/(_islands)/foo.jsx",
     );
 
-    assert_lint_err!(FreshServerEventHandlers, filename: "routes/index.tsx",  r#"<button onClick={() => {}} />"#: [
+    assert_lint_err!(FreshServerEventHandlers, filename: "file:///routes/index.tsx",  r#"<button onClick={() => {}} />"#: [
     {
       col: 8,
       message: MESSAGE,
       hint: HINT,
     }]);
-    assert_lint_err!(FreshServerEventHandlers, filename: "routes/index.tsx",  r#"<button onTouchMove={() => {}} />"#: [
+    assert_lint_err!(FreshServerEventHandlers, filename: "file:///routes/index.tsx",  r#"<button onTouchMove={() => {}} />"#: [
     {
       col: 8,
       message: MESSAGE,
       hint: HINT,
     }]);
-    assert_lint_err!(FreshServerEventHandlers, filename: "routes/index.tsx",  r#"<button onTouchMove={"console.log('hey')"} />"#: [
+    assert_lint_err!(FreshServerEventHandlers, filename: "file:///routes/index.tsx",  r#"<button onTouchMove={"console.log('hey')"} />"#: [
     {
       col: 8,
       message: MESSAGE,
       hint: HINT,
     }]);
 
-    assert_lint_err!(FreshServerEventHandlers, filename: "routes/index.tsx",  r#"<foo-button foo={() => {}} />"#: [
+    assert_lint_err!(FreshServerEventHandlers, filename: "file:///routes/index.tsx",  r#"<foo-button foo={() => {}} />"#: [
     {
       col: 12,
       message: MESSAGE,
       hint: HINT,
     }]);
-    assert_lint_err!(FreshServerEventHandlers, filename: "routes/index.tsx",  r#"<foo-button foo={function () {}} />"#: [
+    assert_lint_err!(FreshServerEventHandlers, filename: "file:///routes/index.tsx",  r#"<foo-button foo={function () {}} />"#: [
     {
       col: 12,
       message: MESSAGE,

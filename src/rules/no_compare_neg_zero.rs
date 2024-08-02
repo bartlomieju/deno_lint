@@ -1,4 +1,5 @@
-// Copyright 2020-2021 the Deno authors. All rights reserved. MIT license.
+// Copyright 2018-2024 the Deno authors. All rights reserved. MIT license.
+
 use super::{Context, LintRule};
 use crate::handler::{Handler, Traverse};
 use crate::Program;
@@ -18,15 +19,13 @@ const CODE: &str = "no-compare-neg-zero";
 
 #[derive(Display)]
 enum NoCompareNegZeroMessage {
-  #[display(fmt = NoCompareNegZeroMessage::Unexpected)]
+  #[display(fmt = "Do not compare against -0")]
   Unexpected,
 }
 
 #[derive(Display)]
 enum NoCompareNegZeroHint {
-  #[display(
-    fmt = NoCompareNegZeroHint::ObjectIs
-  )]
+  #[display(fmt = "Use Object.is(x, -0) instead")]
   ObjectIs,
 }
 

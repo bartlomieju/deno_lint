@@ -1,4 +1,4 @@
-// Copyright 2020-2021 the Deno authors. All rights reserved. MIT license.
+// Copyright 2018-2024 the Deno authors. All rights reserved. MIT license.
 
 #![deny(clippy::disallowed_methods)]
 #![deny(clippy::disallowed_types)]
@@ -28,24 +28,36 @@ pub use deno_ast::view::ProgramRef;
 
 #[cfg(test)]
 mod lint_tests {
+  use std::collections::HashSet;
+
   use crate::diagnostic::LintDiagnostic;
   use crate::linter::*;
-  use crate::rules::{get_recommended_rules, LintRule};
+  use crate::rules::{get_all_rules, recommended_rules, LintRule};
   use crate::test_util::{assert_diagnostic, parse};
-  use deno_ast::MediaType;
   use deno_ast::ParsedSource;
+  use deno_ast::{MediaType, ModuleSpecifier};
 
   fn lint(
     source: &str,
-    rules: Vec<&'static dyn LintRule>,
+    rules: Vec<Box<dyn LintRule>>,
+    all_rule_codes: HashSet<&'static str>,
   ) -> Vec<LintDiagnostic> {
-    let linter = LinterBuilder::default().rules(rules).build();
+    let linter = Linter::new(LinterOptions {
+      rules,
+      all_rule_codes,
+      custom_ignore_diagnostic_directive: None,
+      custom_ignore_file_directive: None,
+    });
 
     let (_, diagnostics) = linter
       .lint_file(LintFileOptions {
-        filename: "lint_test.ts".to_string(),
+        specifier: ModuleSpecifier::parse("file:///lint_test.ts").unwrap(),
         source_code: source.to_string(),
         media_type: MediaType::TypeScript,
+        config: LintConfig {
+          default_jsx_factory: None,
+          default_jsx_fragment_factory: None,
+        },
       })
       .expect("Failed to lint");
     diagnostics
@@ -53,28 +65,60 @@ mod lint_tests {
 
   fn lint_with_ast(
     parsed_source: &ParsedSource,
-    rules: Vec<&'static dyn LintRule>,
+    rules: Vec<Box<dyn LintRule>>,
+    all_rule_codes: HashSet<&'static str>,
   ) -> Vec<LintDiagnostic> {
-    let linter = LinterBuilder::default().rules(rules).build();
-
-    linter.lint_with_ast(parsed_source)
+    let linter = Linter::new(LinterOptions {
+      rules,
+      all_rule_codes,
+      custom_ignore_diagnostic_directive: None,
+      custom_ignore_file_directive: None,
+    });
+    linter.lint_with_ast(
+      parsed_source,
+      LintConfig {
+        default_jsx_factory: None,
+        default_jsx_fragment_factory: None,
+      },
+    )
   }
 
   fn lint_recommended_rules(source: &str) -> Vec<LintDiagnostic> {
-    lint(source, get_recommended_rules())
+    lint(
+      source,
+      recommended_rules(get_all_rules()),
+      get_all_rules()
+        .into_iter()
+        .map(|rule| rule.code())
+        .collect(),
+    )
   }
 
   fn lint_recommended_rules_with_ast(
     parsed_source: &ParsedSource,
   ) -> Vec<LintDiagnostic> {
-    lint_with_ast(parsed_source, get_recommended_rules())
+    lint_with_ast(
+      parsed_source,
+      recommended_rules(get_all_rules()),
+      get_all_rules()
+        .into_iter()
+        .map(|rule| rule.code())
+        .collect(),
+    )
   }
 
   fn lint_specified_rule(
-    rule: &'static dyn LintRule,
+    rule: Box<dyn LintRule>,
     source: &str,
   ) -> Vec<LintDiagnostic> {
-    lint(source, vec![rule])
+    lint(
+      source,
+      vec![rule],
+      get_all_rules()
+        .into_iter()
+        .map(|rule| rule.code())
+        .collect(),
+    )
   }
 
   #[test]
@@ -107,7 +151,7 @@ mod lint_tests {
    let _bar_foo = true
  }
       "#;
-    let diagnostics = lint(src, vec![]);
+    let diagnostics = lint(src, vec![], HashSet::new());
     assert!(diagnostics.is_empty());
   }
 
@@ -129,7 +173,7 @@ export function foo() {
   fn unknown_rules_always_know_available_rules() {
     use crate::rules::camelcase::Camelcase;
     let diagnostics = lint_specified_rule(
-      &Camelcase,
+      Box::new(Camelcase),
       r#"
 // deno-lint-ignore no-explicit-any
 const fooBar: any = 42;
@@ -160,7 +204,7 @@ const fooBar: any = 42;
   fn ban_unused_ignore_not_report_unexecuted_rule() {
     use crate::rules::camelcase::Camelcase;
     let diagnostics = lint_specified_rule(
-      &Camelcase,
+      Box::new(Camelcase),
       r#"
 // deno-lint-ignore no-explicit-any
 const _fooBar = 42;

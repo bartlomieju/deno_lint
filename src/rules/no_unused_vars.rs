@@ -1,28 +1,32 @@
-// Copyright 2020-2021 the Deno authors. All rights reserved. MIT license.
+// Copyright 2018-2024 the Deno authors. All rights reserved. MIT license.
+
 use super::program_ref;
 use super::{Context, LintRule};
 use crate::Program;
 use crate::ProgramRef;
-use deno_ast::swc::ast::Id;
 use deno_ast::swc::ast::{
-  ArrowExpr, AssignPatProp, CallExpr, CatchClause, ClassDecl, ClassMethod,
-  ClassProp, Constructor, Decl, DefaultDecl, ExportDecl, ExportDefaultDecl,
-  ExportNamedSpecifier, Expr, FnDecl, FnExpr, Function, Ident,
-  ImportDefaultSpecifier, ImportNamedSpecifier, ImportStarAsSpecifier,
-  MemberExpr, MemberProp, MethodKind, ModuleExportName, NamedExport, Param,
-  Pat, PrivateMethod, Prop, PropName, SetterProp, TsEntityName, TsEnumDecl,
+  ArrowExpr, AssignExpr, AssignPatProp, AssignTarget, CallExpr, CatchClause,
+  ClassDecl, ClassMethod, ClassProp, Constructor, Decl, DefaultDecl,
+  ExportDecl, ExportDefaultDecl, ExportNamedSpecifier, Expr, FnDecl, FnExpr,
+  Function, Ident, ImportDefaultSpecifier, ImportNamedSpecifier,
+  ImportStarAsSpecifier, JSXElementName, JSXFragment, JSXObject, MemberExpr,
+  MemberProp, MethodKind, ModuleExportName, NamedExport, Param, Pat,
+  PrivateMethod, Prop, PropName, SetterProp, TsEntityName, TsEnumDecl,
   TsExprWithTypeArgs, TsImportEqualsDecl, TsInterfaceDecl, TsModuleDecl,
   TsModuleRef, TsNamespaceDecl, TsPropertySignature, TsTypeAliasDecl,
   TsTypeQueryExpr, TsTypeRef, VarDecl, VarDeclarator,
 };
+use deno_ast::swc::ast::{Id, SimpleAssignTarget};
 use deno_ast::swc::atoms::js_word;
 use deno_ast::swc::utils::find_pat_ids;
 use deno_ast::swc::visit::{Visit, VisitWith};
-use deno_ast::{MediaType, SourceRangedForSpanned};
+use deno_ast::view::AssignOp;
+use deno_ast::SourceRangedForSpanned;
 use derive_more::Display;
 use if_chain::if_chain;
 use std::collections::HashSet;
 use std::iter;
+use std::sync::Arc;
 
 #[derive(Debug)]
 pub struct NoUnusedVars;
@@ -65,14 +69,14 @@ impl LintRule for NoUnusedVars {
     program: Program<'view>,
   ) {
     let program = program_ref(program);
-    // Skip linting this file to avoid emitting false positives about `jsxFactory` and `jsxFragmentFactory`
-    // if it's a JSX or TSX file.
-    // See https://github.com/denoland/deno_lint/pull/664#discussion_r614692736
-    if is_jsx_file(context.media_type()) {
-      return;
-    }
 
-    let mut collector = Collector::default();
+    let mut collector = Collector {
+      cur_defining: vec![],
+      used_types: Default::default(),
+      used_vars: Default::default(),
+      jsx_factory: context.jsx_factory(),
+      jsx_fragment_factory: context.jsx_fragment_factory(),
+    };
     match program {
       ProgramRef::Module(m) => m.visit_with(&mut collector),
       ProgramRef::Script(s) => s.visit_with(&mut collector),
@@ -95,12 +99,7 @@ impl LintRule for NoUnusedVars {
   }
 }
 
-fn is_jsx_file(media_type: MediaType) -> bool {
-  media_type == MediaType::Jsx || media_type == MediaType::Tsx
-}
-
 /// Collects information about variable usages.
-#[derive(Default)]
 struct Collector {
   used_vars: HashSet<Id>,
   used_types: HashSet<Id>,
@@ -115,6 +114,10 @@ struct Collector {
   /// Type of this should be hashset, but we don't have a way to
   /// restore hashset after handling bindings
   cur_defining: Vec<Id>,
+  #[allow(clippy::redundant_allocation)] // This type comes from SWC.
+  jsx_factory: Option<Arc<Box<Expr>>>,
+  #[allow(clippy::redundant_allocation)] // This type comes from SWC.
+  jsx_fragment_factory: Option<Arc<Box<Expr>>>,
 }
 
 impl Collector {
@@ -210,10 +213,7 @@ impl Visit for Collector {
       n.key.visit_with(self);
     }
 
-    n.type_params.visit_with(self);
     n.type_ann.visit_with(self);
-    n.params.visit_with(self);
-    n.init.visit_with(self);
   }
 
   fn visit_ts_type_ref(&mut self, ty: &TsTypeRef) {
@@ -254,6 +254,65 @@ impl Visit for Collector {
     match expr {
       Expr::Ident(i) => self.mark_as_usage(i),
       _ => expr.visit_children_with(self),
+    }
+  }
+
+  fn visit_jsx_element_name(&mut self, n: &JSXElementName) {
+    if let Some(factory) = self.jsx_factory.take() {
+      factory.visit_with(self)
+    }
+    match n {
+      JSXElementName::Ident(i) => {
+        if !i.sym.starts_with(|c: char| c.is_ascii_lowercase()) {
+          self.mark_as_usage(i)
+        }
+      }
+      JSXElementName::JSXMemberExpr(n) => n.visit_with(self),
+      JSXElementName::JSXNamespacedName(_) => {
+        // This is a string literal.
+      }
+    }
+  }
+
+  fn visit_jsx_object(&mut self, n: &JSXObject) {
+    match n {
+      JSXObject::Ident(i) => self.mark_as_usage(i),
+      JSXObject::JSXMemberExpr(n) => n.visit_with(self),
+    }
+  }
+
+  fn visit_jsx_fragment(&mut self, n: &JSXFragment) {
+    if let Some(factory) = self.jsx_fragment_factory.take() {
+      factory.visit_with(self)
+    }
+    n.visit_children_with(self);
+  }
+
+  fn visit_simple_assign_target(&mut self, n: &SimpleAssignTarget) {
+    match n {
+      SimpleAssignTarget::Ident(ident) => {
+        self.mark_as_usage(&ident.id);
+      }
+      _ => n.visit_children_with(self),
+    }
+  }
+
+  fn visit_assign_expr(&mut self, n: &AssignExpr) {
+    if n.op == AssignOp::Assign {
+      match &n.left {
+        AssignTarget::Simple(target) => {
+          match target {
+            SimpleAssignTarget::Ident(_) => {
+              // ignore and only visit the right
+              n.right.visit_with(self)
+            }
+            _ => n.visit_children_with(self),
+          }
+        }
+        AssignTarget::Pat(_) => n.visit_children_with(self),
+      }
+    } else {
+      n.visit_children_with(self)
     }
   }
 
@@ -305,7 +364,7 @@ impl Visit for Collector {
 
   fn visit_function(&mut self, function: &Function) {
     if_chain! {
-      if let Some(first_param) = function.params.get(0);
+      if let Some(first_param) = function.params.first();
       if let Pat::Ident(ident) = &first_param.pat;
       if ident.type_ann.is_some();
       if ident.id.sym == js_word!("this");
@@ -1413,7 +1472,7 @@ console.log(MyDeps);
     // JSX or TSX
     assert_lint_ok! {
       NoUnusedVars,
-      filename: "foo.tsx",
+      filename: "file:///foo.tsx",
       r#"
 import { TypeA } from './interface';
 export const a = <GenericComponent<TypeA> />;
@@ -1453,6 +1512,17 @@ export default <Component />;
 import React from "./dummy.ts";
 class Component extends React.Component { render() { return null; } }
 export default <Component />;
+      "#,
+
+      r#"
+/** @jsx h */
+import { h } from "./dummy.ts";
+export default <foo />;
+      "#,
+      r#"
+/** @jsxFrag Fragment */
+import { Fragment } from "./dummy.ts";
+export default <></>;
       "#,
     };
   }
@@ -1505,6 +1575,13 @@ export default <Component />;
         }
       ],
       "function f() { var a = 1; return function(){ f(++a); }; }": [
+        {
+          col: 9,
+          message: variant!(NoUnusedVarsMessage, NeverUsed, "f"),
+          hint: variant!(NoUnusedVarsHint, AddPrefix, "f"),
+        }
+      ],
+      "function f() { var a = { prop: 1 }; return function(){ f(a.prop *= 2); }; }": [
         {
           col: 9,
           message: variant!(NoUnusedVarsMessage, NeverUsed, "f"),
@@ -2244,6 +2321,37 @@ export class Foo {
           },
         ],
     };
+
+    // jsx/tsx
+    assert_lint_err! {
+      NoUnusedVars,
+      filename: "file:///foo.tsx",
+      r#"
+import React from 'react';
+export const Foo = () => {
+  return "string";
+}"#: [
+        {
+          line: 2,
+          col: 7,
+          message: variant!(NoUnusedVarsMessage, NeverUsed, "React"),
+          hint: variant!(NoUnusedVarsHint, AddPrefix, "React"),
+        }
+      ],
+      r#"
+/** @jsx h */ /** @jsxFrag Fragment */
+import { h, Fragment } from "preact";
+export const Foo = () => {
+  return <></>;
+}"#: [
+        {
+          line: 3,
+          col: 9,
+          message: variant!(NoUnusedVarsMessage, NeverUsed, "h"),
+          hint: variant!(NoUnusedVarsHint, Alias, "h"),
+        }
+      ]
+    }
   }
 
   // TODO(magurotuna): deals with this using ControlFlow

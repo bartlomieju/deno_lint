@@ -1,4 +1,5 @@
-// Copyright 2020-2021 the Deno authors. All rights reserved. MIT license.
+// Copyright 2018-2024 the Deno authors. All rights reserved. MIT license.
+
 use super::{Context, LintRule};
 use crate::handler::{Handler, Traverse};
 
@@ -91,7 +92,7 @@ impl Handler for ExplicitModuleBoundaryTypesHandler {
 }
 
 fn check_class(class: &ast_view::Class, ctx: &mut Context) {
-  for member in &class.body {
+  for member in class.body {
     if let ast_view::ClassMember::Method(method) = member {
       let is_setter = method.inner.kind == ast_view::MethodKind::Setter;
       check_fn(method.function, ctx, is_setter);
@@ -108,7 +109,7 @@ fn check_fn(function: &ast_view::Function, ctx: &mut Context, is_setter: bool) {
       ExplicitModuleBoundaryTypesHint::AddRetType,
     );
   }
-  for param in &function.params {
+  for param in function.params {
     check_pat(&param.pat, ctx);
   }
 }
@@ -122,7 +123,7 @@ fn check_arrow(arrow: &ast_view::ArrowExpr, ctx: &mut Context) {
       ExplicitModuleBoundaryTypesHint::AddRetType,
     );
   }
-  for pat in &arrow.params {
+  for pat in arrow.params {
     check_pat(pat, ctx);
   }
 }
@@ -181,7 +182,7 @@ fn check_expr(expr: &ast_view::Expr, ctx: &mut Context) {
 }
 
 fn check_var_decl(var: &ast_view::VarDecl, ctx: &mut Context) {
-  for declarator in &var.decls {
+  for declarator in var.decls {
     if let Some(expr) = &declarator.init {
       check_expr(expr, ctx)
     }
@@ -196,7 +197,7 @@ mod tests {
   fn explicit_module_boundary_types_valid() {
     assert_lint_ok! {
       ExplicitModuleBoundaryTypes,
-      filename: "foo.ts",
+      filename: "file:///foo.ts",
       "function test() { return }",
       "export var fn = function (): number { return 1; }",
       "export var arrowFn = (arg: string): string => `test ${arg}`",
@@ -209,7 +210,7 @@ mod tests {
 
     assert_lint_ok! {
       ExplicitModuleBoundaryTypes,
-      filename: "foo.js",
+      filename: "file:///foo.js",
       "function test() { return }",
       "export var fn = function () { return 1; }",
       "export var arrowFn = (arg) => `test ${arg}`",
@@ -219,7 +220,7 @@ mod tests {
 
     assert_lint_ok! {
       ExplicitModuleBoundaryTypes,
-      filename: "foo.jsx",
+      filename: "file:///foo.jsx",
       "export function Foo(props) {return <div>{props.name}</div>}",
       "export default class Foo { render() { return <div></div>}}"
     };
