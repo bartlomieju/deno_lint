@@ -2,9 +2,10 @@
 
 use deno_ast::swc::common as swc_common;
 use deno_ast::swc::common::BytePos;
-use deno_ast::{ParsedSource, SourcePos};
+use deno_ast::{ParsedSource, SourcePos, SourceRange};
+use deno_core::url::Url;
 use deno_core::{op2, OpState};
-use deno_lint::diagnostic::{LintDiagnostic, Position, Range};
+use deno_lint::diagnostic::{LintDiagnostic, LintDiagnosticDetails, LintDiagnosticRange};
 use std::rc::Rc;
 use std::sync::mpsc::RecvError;
 use deno_ast::view::Comments;
@@ -17,7 +18,6 @@ pub struct PluginLintRequest {
   pub parsed_source: ParsedSource,
 }
 
-#[derive(Debug)]
 pub struct PluginLintResponse {
   pub diagnostics: Vec<LintDiagnostic>,
 }
@@ -63,14 +63,14 @@ fn op_get_ctx(state: &OpState) -> serde_json::Value {
 
   // Create an ESTree compatbile AST
   let estree_ast = {
-    let cm = Arc::new(swc_common::SourceMap::new(
+    let cm = Rc::new(swc_common::SourceMap::new(
       swc_common::FilePathMapping::empty(),
     ));
-    let fm = Arc::new(swc_common::SourceFile::new(
-      swc_common::FileName::Anon,
+    let fm = Rc::new(swc_common::SourceFile::new(
+      Rc::new(swc_common::FileName::Anon),
       false,
-      swc_common::FileName::Anon,
-      ctx.parsed_source.text_info().text_str().to_string(),
+      Rc::new(swc_common::FileName::Anon),
+      ctx.parsed_source.text().to_string(),
       BytePos(0),
     ));
     // let comments = deno_ast::MultiThreadedComments;
@@ -100,7 +100,7 @@ fn op_add_diagnostic(
 ) {
   let ctx = state.borrow_mut::<PluginCtx>();
 
-  let text_str = ctx.parsed_source.text_info().text_str();
+  let text_str = ctx.parsed_source.text();
   if text_str.is_empty() {
     return;
   }
@@ -110,24 +110,24 @@ fn op_add_diagnostic(
 
   let start_source_pos = SourcePos::unsafely_from_byte_pos(BytePos(start));
   let end_source_pos = SourcePos::unsafely_from_byte_pos(BytePos(end));
-  let text_info = ctx.parsed_source.text_info();
-  let range = Range {
-    start: Position::new(
-      start as usize,
-      text_info.line_and_column_index(start_source_pos),
-    ),
-    end: Position::new(
-      end as usize,
-      text_info.line_and_column_index(end_source_pos),
-    ),
+  let text_info = ctx.parsed_source.text_info_lazy();
+  let range = LintDiagnosticRange {
+    text_info: text_info.clone(),
+    range: SourceRange::new(start_source_pos, end_source_pos),
+    description: None,
   };
 
   let lint_diagnostic = LintDiagnostic {
-    range,
-    filename: ctx.filename.to_string(),
-    code,
-    message,
-    hint,
+    range: Some(range),
+    specifier: Url::parse(&ctx.filename).unwrap(),
+    details: LintDiagnosticDetails {
+      code,
+      message,
+      hint,
+      fixes: vec![],
+      custom_docs_url: None,
+      info: vec![],
+    },
   };
   ctx.diagnostics.push(lint_diagnostic);
 }

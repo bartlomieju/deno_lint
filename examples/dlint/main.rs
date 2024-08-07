@@ -4,6 +4,8 @@ use anyhow::bail;
 use anyhow::Error as AnyError;
 use clap::Arg;
 use clap::Command;
+use deno_ast::SourceTextInfo;
+use deno_lint::diagnostic::LintDiagnostic;
 use core::panic;
 use deno_ast::diagnostics::Diagnostic;
 use deno_ast::MediaType;
@@ -94,29 +96,28 @@ fn run_linter(
 
   let error_counts = Arc::new(AtomicUsize::new(0));
 
-  struct FileDiagnostics {
-    filename: String,
-    text_info: SourceTextInfo,
-    diagnostics: Vec<LintDiagnostic>,
-  }
-
-  let mut rules = get_recommended_rules();
-  let mut plugins = vec![];
-
-  eprintln!("filter rule name {:#?}", filter_rule_name);
-  if let Some(rule_name) = filter_rule_name {
+  let all_rules = get_all_rules();
+  let all_rule_codes = all_rules
+    .iter()
+    .map(|rule| rule.code())
+    .collect::<HashSet<_>>();
+  let rules = if let Some(config) = maybe_config.clone() {
+    config.get_rules()
+  } else if let Some(rule_name) = filter_rule_name {
     let include = vec![rule_name.to_string()];
-    rules = get_filtered_rules(Some(vec![]), None, Some(include));
+    filtered_rules(get_all_rules(), Some(vec![]), None, Some(include))
+  } else {
+    recommended_rules(get_all_rules())
+  };
+  if rules.is_empty() {
+    bail!("No lint rules configured");
+  } else {
+    debug!("Configured rules: {}", rules.len());
   }
 
+  let mut plugins = vec![];
+  
   if let Some(config) = maybe_config {
-    eprintln!("config {:#?}", config);
-    if let Some(r) = config.get_rules() {
-      rules = r;
-    }
-    // TODO(bartlomieju): resolve plugins correctly
-    // config.plugins
-    eprintln!("configured plugins {:#?}", config.plugins);
     plugins = config.get_plugins().unwrap();
   }
 
@@ -126,27 +127,6 @@ fn run_linter(
     None
   };
 
-  let file_diagnostics = Arc::new(Mutex::new(BTreeMap::new()));
-
-  let all_rules = get_all_rules();
-  let all_rule_codes = all_rules
-    .iter()
-    .map(|rule| rule.code())
-    .collect::<HashSet<_>>();
-  let rules = if let Some(config) = maybe_config {
-    config.get_rules()
-  } else if let Some(rule_name) = filter_rule_name {
-    let include = vec![rule_name.to_string()];
-    filtered_rules(get_all_rules(), Some(vec![]), None, Some(include))
-  } else {
-    recommended_rules(get_all_rules())
-  };
-
-  if rules.is_empty() {
-    bail!("No lint rules configured");
-  } else {
-    debug!("Configured rules: {}", rules.len());
-  }
   let file_diagnostics = Arc::new(Mutex::new(BTreeMap::new()));
   let linter = Linter::new(LinterOptions {
     rules,
@@ -160,7 +140,7 @@ fn run_linter(
     .try_for_each(|file_path| -> Result<(), AnyError> {
       let source_code = std::fs::read_to_string(file_path)?;
 
-      let (parsed_source, diagnostics) = linter.lint_file(LintFileOptions {
+      let (parsed_source, mut diagnostics) = linter.lint_file(LintFileOptions {
         specifier: ModuleSpecifier::from_file_path(file_path).unwrap_or_else(
           |_| {
             panic!(
@@ -177,18 +157,6 @@ fn run_linter(
         },
       })?;
 
-      let mut number_of_errors = diagnostics.len();
-      if !parsed_source.diagnostics().is_empty() {
-        number_of_errors += parsed_source.diagnostics().to_vec().len();
-        parsed_source.diagnostics().to_vec().iter().for_each(
-          |parsing_diagnostic| {
-            eprintln!("{}", parsing_diagnostic.display());
-          },
-        );
-      }
-
-      error_counts.fetch_add(number_of_errors, Ordering::Relaxed);
-
       let mut lock = file_diagnostics.lock().unwrap();
 
       if let Some(plugin_host) = maybe_plugin_host.as_ref() {
@@ -198,18 +166,21 @@ fn run_linter(
             parsed_source.clone(),
           )
           .unwrap();
-        eprintln!("plugin response {:#?}", response);
+        // eprintln!("plugin response {:#?}", response);
         diagnostics.extend_from_slice(&response.diagnostics);
       }
 
-      lock.insert(
-        file_path,
-        FileDiagnostics {
-          filename: file_path.to_string_lossy().to_string(),
-          diagnostics,
-          text_info: parsed_source.text_info().clone(),
-        },
-      );
+      let mut number_of_errors = diagnostics.len();
+      if !parsed_source.diagnostics().is_empty() {
+        number_of_errors += parsed_source.diagnostics().to_vec().len();
+        parsed_source.diagnostics().to_vec().iter().for_each(
+          |parsing_diagnostic| {
+            eprintln!("{}", parsing_diagnostic.display());
+          },
+        );
+      }
+      error_counts.fetch_add(number_of_errors, Ordering::Relaxed);
+
       lock.insert(file_path, diagnostics);
 
       Ok(())
