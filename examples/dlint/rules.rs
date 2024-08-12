@@ -1,9 +1,9 @@
 // Copyright 2018-2024 the Deno authors. All rights reserved. MIT license.
 
-use std::io::IsTerminal;
 use crate::color::colorize_markdown;
 use deno_lint::rules::get_all_rules;
 use serde::Serialize;
+use std::io::IsTerminal;
 
 #[derive(Clone, Copy, Serialize)]
 pub struct Rule {

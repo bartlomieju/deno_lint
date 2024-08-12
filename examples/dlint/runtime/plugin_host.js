@@ -1,7 +1,8 @@
-// import { Visitor } from "ext:dlint/visitor.js"
-Deno.core.print("Hello from plugin_host.js\n");
+import { Visitor } from "ext:dlint/visitor.js"
+console.log("Hello from plugin_host.js");
 
 const getCtx = Deno.core.ops.op_get_ctx;
+const getCtx2 = Deno.core.ops.op_get_ctx2;
 const addDiagnostic = Deno.core.ops.op_add_diagnostic;
 
 const loadedPlugins = [];
@@ -15,14 +16,18 @@ async function hostInit({ plugins }) {
         loadedPlugins.push(pluginInstance);
     }
 
-    Deno.core.print(`Loaded plugins: ${loadedPlugins.length}\n`)
+    console.log(`Loaded plugins: ${loadedPlugins.length}`)
 }
 
 function hostRequest() {
-    const { filename, ast } = getCtx();
-    Deno.core.print(`Got AST for ${filename}: ${JSON.stringify(ast, undefined, 4)}\n`);
+    // const [filename, ast] = getCtx();
+    // const ast = getCtx();
+    const ast = getCtx2();
+    const filename = "..."
+    // Deno.core.print(`Got AST for ${filename}: ${JSON.stringify(ast, undefined, 4)}\n`);
+    console.log(`Got AST for ${filename}`);
     for (const plugin of loadedPlugins) {
-        Deno.core.print(`Running plugin: ${plugin.name} for ${filename}\n`)
+        console.log(`Running plugin: ${plugin.name} for ${filename}`);
         // const visitor = new Visitor();
         // visitor.visitProgram(ast);
         if (ast.span) {

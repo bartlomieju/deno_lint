@@ -2,13 +2,17 @@
 
 use deno_ast::swc::common as swc_common;
 use deno_ast::swc::common::BytePos;
+use deno_ast::view::Comments;
 use deno_ast::{ParsedSource, SourcePos, SourceRange};
+use deno_core::serde_v8;
 use deno_core::url::Url;
+use deno_core::v8;
 use deno_core::{op2, OpState};
-use deno_lint::diagnostic::{LintDiagnostic, LintDiagnosticDetails, LintDiagnosticRange};
+use deno_lint::diagnostic::{
+  LintDiagnostic, LintDiagnosticDetails, LintDiagnosticRange,
+};
 use std::rc::Rc;
 use std::sync::mpsc::RecvError;
-use deno_ast::view::Comments;
 use std::sync::{Arc, Mutex};
 use swc_estree_compat::babelify;
 use swc_estree_compat::babelify::Babelify;
@@ -58,7 +62,7 @@ struct PluginCtx {
 
 #[op2]
 #[serde]
-fn op_get_ctx(state: &OpState) -> serde_json::Value {
+fn op_get_ctx(state: &OpState) -> (String, serde_json::Value) {
   let ctx = state.borrow::<PluginCtx>();
 
   // Create an ESTree compatbile AST
@@ -71,7 +75,7 @@ fn op_get_ctx(state: &OpState) -> serde_json::Value {
       false,
       Rc::new(swc_common::FileName::Anon),
       ctx.parsed_source.text().to_string(),
-      BytePos(0),
+      BytePos(1),
     ));
     // let comments = deno_ast::MultiThreadedComments;
     let babelify_ctx = babelify::Context {
@@ -80,13 +84,47 @@ fn op_get_ctx(state: &OpState) -> serde_json::Value {
       comments: swc_node_comments::SwcComments::default(),
     };
     let program = ctx.parsed_source.program_ref().clone();
-    serde_json::to_value(program.babelify(&babelify_ctx)).unwrap()
+    let start = std::time::Instant::now();
+    let r = serde_json::to_value(program.babelify(&babelify_ctx)).unwrap();
+    let end = std::time::Instant::now();
+    eprintln!("serialize using serde_json took {:?}", end - start);
+    r
   };
 
-  serde_json::json!({
-      "filename": &ctx.filename,
-      "ast": estree_ast
-  })
+  (ctx.filename.to_string(), estree_ast)
+}
+
+#[op2]
+fn op_get_ctx2<'s>(
+  scope: &'s mut v8::HandleScope,
+  state: &OpState,
+) -> v8::Local<'s, v8::Value> {
+  let ctx = state.borrow::<PluginCtx>();
+
+  // Create an ESTree compatbile AST
+  let cm = Rc::new(swc_common::SourceMap::new(
+    swc_common::FilePathMapping::empty(),
+  ));
+  let fm = Rc::new(swc_common::SourceFile::new(
+    Rc::new(swc_common::FileName::Anon),
+    false,
+    Rc::new(swc_common::FileName::Anon),
+    ctx.parsed_source.text().to_string(),
+    BytePos(1),
+  ));
+  // let comments = deno_ast::MultiThreadedComments;
+  let babelify_ctx = babelify::Context {
+    fm,
+    cm,
+    comments: swc_node_comments::SwcComments::default(),
+  };
+  let program = ctx.parsed_source.program_ref().clone();
+  let start = std::time::Instant::now();
+  let estree_ast =
+    serde_v8::to_v8(scope, program.babelify(&babelify_ctx)).unwrap();
+  let end = std::time::Instant::now();
+  eprintln!("serialize using serde_v8 took {:?}", end - start);
+  estree_ast
 }
 
 #[op2]
@@ -133,7 +171,7 @@ fn op_add_diagnostic(
 }
 
 deno_core::extension!(dlint,
-  ops = [op_get_ctx, op_add_diagnostic],
+  ops = [op_get_ctx, op_get_ctx2, op_add_diagnostic],
   esm_entry_point = "ext:dlint/plugin_host.js",
   esm = [
     dir "examples/dlint/runtime",
@@ -190,7 +228,7 @@ async fn run_plugin_host(
   });
   let init_src = format!("globalThis.hostInit({})", init_config);
   js_runtime
-    .execute_script("init.js", init_src.into())
+    .execute_script("init.js", deno_core::FastString::from(init_src))
     .unwrap();
   js_runtime
     .run_event_loop(deno_core::PollEventLoopOptions {
@@ -216,8 +254,10 @@ async fn run_plugin_host(
         diagnostics: vec![],
       });
     }
-    let src = "globalThis.hostRequest()".to_string();
-    js_runtime.execute_script("request.js", src.into()).unwrap();
+    let src = "globalThis.hostRequest()";
+    js_runtime
+      .execute_script("request.js", deno_core::FastString::from_static(src))
+      .unwrap();
     let ctx = op_state.borrow_mut().take::<PluginCtx>();
     response_tx
       .send(PluginLintResponse {

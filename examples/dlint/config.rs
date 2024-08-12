@@ -27,7 +27,7 @@ pub struct FilesConfig {
 #[derive(Debug, Default, Deserialize)]
 #[serde(default)]
 pub struct Config {
-  pub rules: Option<RulesConfig>,
+  pub rules: RulesConfig,
   pub files: FilesConfig,
   pub plugins: Vec<String>,
 }

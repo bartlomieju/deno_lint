@@ -4,12 +4,12 @@ use anyhow::bail;
 use anyhow::Error as AnyError;
 use clap::Arg;
 use clap::Command;
-use deno_ast::SourceTextInfo;
-use deno_lint::diagnostic::LintDiagnostic;
 use core::panic;
 use deno_ast::diagnostics::Diagnostic;
 use deno_ast::MediaType;
 use deno_ast::ModuleSpecifier;
+use deno_ast::SourceTextInfo;
+use deno_lint::diagnostic::LintDiagnostic;
 use deno_lint::linter::LintConfig;
 use deno_lint::linter::LintFileOptions;
 use deno_lint::linter::Linter;
@@ -116,7 +116,7 @@ fn run_linter(
   }
 
   let mut plugins = vec![];
-  
+
   if let Some(config) = maybe_config {
     plugins = config.get_plugins().unwrap();
   }
@@ -140,22 +140,23 @@ fn run_linter(
     .try_for_each(|file_path| -> Result<(), AnyError> {
       let source_code = std::fs::read_to_string(file_path)?;
 
-      let (parsed_source, mut diagnostics) = linter.lint_file(LintFileOptions {
-        specifier: ModuleSpecifier::from_file_path(file_path).unwrap_or_else(
-          |_| {
-            panic!(
-              "Failed to convert path to module specifier: {}",
-              file_path.display()
-            )
+      let (parsed_source, mut diagnostics) =
+        linter.lint_file(LintFileOptions {
+          specifier: ModuleSpecifier::from_file_path(file_path).unwrap_or_else(
+            |_| {
+              panic!(
+                "Failed to convert path to module specifier: {}",
+                file_path.display()
+              )
+            },
+          ),
+          source_code,
+          media_type: MediaType::from_path(file_path),
+          config: LintConfig {
+            default_jsx_factory: Some("React.createElement".to_string()),
+            default_jsx_fragment_factory: Some("React.Fragment".to_string()),
           },
-        ),
-        source_code,
-        media_type: MediaType::from_path(file_path),
-        config: LintConfig {
-          default_jsx_factory: Some("React.createElement".to_string()),
-          default_jsx_fragment_factory: Some("React.Fragment".to_string()),
-        },
-      })?;
+        })?;
 
       let mut lock = file_diagnostics.lock().unwrap();
 
